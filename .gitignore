@@ -1,0 +1,39 @@
+# dependencies
+node_modules/
+
+# build output
+.next/
+out/
+build/
+dist/
+*.tsbuildinfo
+next-env.d.ts
+
+# secrets — only *.example files are committed
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# python
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
+
+# photoshop connector packaging
+*.ccx
+
+# test fixtures with real documents live outside git unless explicitly added
+*.psd
+
+# os / editors
+.DS_Store
+.idea/
+.vscode/*
+!.vscode/extensions.json
+coverage/
