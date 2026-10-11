@@ -1206,18 +1206,28 @@ async function main() {
     const beforeDisconnect = await beat();
     const disconnected = await json("/api/connector/disconnect", {}, paired.token);
     const afterDisconnect = await beat();
+    const renewAfterDisconnect = await json("/api/connector/refresh", {
+      refreshToken: paired.refreshToken,
+    });
     const { data: revoked } = await admin
       .from("connector_sessions")
       .select("status")
       .eq("id", started.sessionId)
       .single();
     check(
-      "disconnecting revokes the connection on the server",
+      "disconnecting revokes the connection and its renewal on the server",
       beforeDisconnect === 200 &&
         disconnected.status === 204 &&
         afterDisconnect === 401 &&
+        renewAfterDisconnect.status === 401 &&
         revoked?.status === "revoked",
-      [beforeDisconnect, disconnected.status, afterDisconnect, revoked?.status],
+      [
+        beforeDisconnect,
+        disconnected.status,
+        afterDisconnect,
+        renewAfterDisconnect.status,
+        revoked?.status,
+      ],
     );
 
     const fake = await fetch(`${BASE}/api/connector/jobs/claim`, {
@@ -1233,13 +1243,47 @@ async function main() {
       [fake.status, anonRpc.error?.code, userRpc.error?.code],
     );
 
-    // --- Token expiry ---
+    // --- Token expiry: remembered connections renew; ended ones ask to pair again ---
+    const tokenHash = async () =>
+      (
+        await admin
+          .from("connector_sessions")
+          .select("token_hash,expires_at,status")
+          .eq("id", session!.id)
+          .single()
+      ).data!;
+    const beforeExpiry = await tokenHash();
     await admin
       .from("connector_sessions")
       .update({ expires_at: new Date(Date.now() - 1000).toISOString() })
       .eq("id", session!.id);
+    const renewed = await waitFor(
+      "plugin renews its expired access token",
+      async () => {
+        const row = await tokenHash();
+        return row.token_hash !== beforeExpiry.token_hash &&
+          new Date(row.expires_at).getTime() > Date.now()
+          ? row
+          : undefined;
+      },
+      30_000,
+    ).catch(() => undefined);
+    const stillActive = (await pluginStatus()).connection.state;
+    check(
+      "an expired access token is renewed without pairing again",
+      !!renewed && stillActive === "active",
+      stillActive,
+    );
+
+    await admin
+      .from("connector_sessions")
+      .update({
+        expires_at: new Date(Date.now() - 1000).toISOString(),
+        refresh_expires_at: new Date(Date.now() - 1000).toISOString(),
+      })
+      .eq("id", session!.id);
     const expired = await waitFor(
-      "plugin notices expiry",
+      "plugin notices the connection ended",
       async () => {
         const s = await pluginStatus();
         return s.connection.state === "expired" ? s : undefined;
@@ -1247,8 +1291,8 @@ async function main() {
       30_000,
     );
     check(
-      "expired connector token stops the plugin and asks to pair again",
-      true,
+      "a connection unused past its limit asks to pair again",
+      expired.connection.state === "expired",
       expired.connection.reason,
     );
   } finally {

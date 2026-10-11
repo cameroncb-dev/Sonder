@@ -100,6 +100,16 @@ Scope (from `Design_Plan.md` §15, plus canvas additions the user requested on 2
   session `revoked`; the plugin calls it on Disconnect. Before, disconnecting only made the
   plugin forget its token, which stayed valid until it expired (12 h). E2E check: a token
   works, is revoked, then gets 401.
+- **Remembered connections** (migration `20261016000000_connector_refresh_tokens.sql`).
+  - Pairing issues a 1-hour access token plus a single-use refresh token (stored hashed,
+    30-day sliding limit). The plugin swaps it for a new pair 10 minutes before the access
+    token expires, on startup, and once when a request reports `TOKEN_EXPIRED`.
+  - `POST /api/connector/refresh` rotates both tokens with a conditional update, so each
+    refresh token works once and revoked sessions can't renew.
+  - Users pair again only after Disconnect or 30 days unused (the user's choice).
+  - E2E: an expired access token renews and the panel stays active; a lapsed connection asks
+    to pair; after Disconnect, both the token and the refresh are rejected. Verified with the
+    user's own connection: refresh stored, remembered until 2026-11-10.
 - **Test runs no longer sign the user's panel out.** The E2E stashes the panel's own
   connection before pairing as a test user and restores it afterwards (dev actions
   `stash-session` / `restore-session`). Verified: the panel was still connected, and its

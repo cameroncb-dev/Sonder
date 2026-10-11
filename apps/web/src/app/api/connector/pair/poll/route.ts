@@ -1,25 +1,23 @@
 import { PairPollRequest, type PairPollResponse } from "@sonder/contracts";
 
 import { createAdminClient } from "@/lib/supabase/server";
-import { CONNECTOR_TOKEN_TTL_MS, newSecret, sha256 } from "@/server/connector-auth";
+import { issueTokens, sha256 } from "@/server/connector-auth";
 import { handler, HttpError, parseJson } from "@/server/http";
 
 /**
- * The plugin polls until a user approves its code. The token is issued exactly
- * once: the conditional update consumes the poll secret.
+ * The plugin polls until a user approves its code. Tokens are issued exactly once: the
+ * conditional update consumes the poll secret. The refresh token keeps the connection alive.
  */
 export const POST = handler(async (request: Request) => {
   const { sessionId, pollSecret } = await parseJson(request, PairPollRequest);
   const admin = createAdminClient();
-  const token = newSecret();
-  const expiresAt = new Date(Date.now() + CONNECTOR_TOKEN_TTL_MS).toISOString();
+  const tokens = issueTokens();
 
   const { data: activated } = await admin
     .from("connector_sessions")
     .update({
       status: "active",
-      token_hash: sha256(token),
-      expires_at: expiresAt,
+      ...tokens.columns,
       pairing_code: null,
       pairing_secret_hash: null,
       last_seen_at: new Date().toISOString(),
@@ -35,8 +33,7 @@ export const POST = handler(async (request: Request) => {
     const { data: user } = await admin.auth.admin.getUserById(activated.user_id);
     const body: PairPollResponse = {
       status: "active",
-      token,
-      expiresAt,
+      ...tokens.body,
       user: { id: activated.user_id, ...(user.user?.email ? { email: user.user.email } : {}) },
     };
     return Response.json(body);

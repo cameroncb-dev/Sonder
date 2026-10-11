@@ -41,7 +41,17 @@ interface StoredSession {
   token: string;
   expiresAt: string;
   user: { id: string; email?: string };
+  /** Renews the access token without pairing again (remembered connection). */
+  refreshToken?: string;
+  refreshExpiresAt?: string;
 }
+
+/** Renew this long before the access token expires. */
+const RENEW_BEFORE_MS = 10 * 60 * 1000;
+
+const valid = (iso: string | undefined) => !!iso && new Date(iso).getTime() > Date.now();
+/** How long the connection is remembered, shown in the panel. */
+const shownExpiry = (s: StoredSession) => s.refreshExpiresAt ?? s.expiresAt;
 
 export type ConnectionState =
   | { state: "unpaired" }
@@ -133,10 +143,11 @@ export class ConnectorRuntime {
       Object.entries(await load<Record<string, string>>("baselines.json", {})),
     );
     const stored = await load<StoredSession | null>("session.json", null);
-    if (stored && new Date(stored.expiresAt).getTime() > Date.now()) {
+    if (stored && (valid(stored.expiresAt) || valid(stored.refreshExpiresAt))) {
+      // An expired access token is renewed on the first tick if the connection is remembered.
       this.session = stored;
       this.update({
-        connection: { state: "active", user: stored.user, expiresAt: stored.expiresAt },
+        connection: { state: "active", user: stored.user, expiresAt: shownExpiry(stored) },
       });
     } else if (stored) {
       this.update({ connection: { state: "expired", reason: "Session expired; connect again" } });
@@ -200,12 +211,13 @@ export class ConnectorRuntime {
   async restoreSession() {
     const stored = await load<StoredSession | null>("session.stash.json", null);
     await save("session.stash.json", null);
-    if (!stored || new Date(stored.expiresAt).getTime() <= Date.now()) return { restored: false };
+    if (!stored || !(valid(stored.expiresAt) || valid(stored.refreshExpiresAt)))
+      return { restored: false };
     this.pairing = undefined;
     this.session = stored;
     await save("session.json", stored);
     this.update({
-      connection: { state: "active", user: stored.user, expiresAt: stored.expiresAt },
+      connection: { state: "active", user: stored.user, expiresAt: shownExpiry(stored) },
       error: undefined,
     });
     return { restored: true };
@@ -253,18 +265,46 @@ export class ConnectorRuntime {
     this.busy = true;
     try {
       if (this.pairing) await this.pollPairing();
+      // Renew shortly before the access token expires, so work never pauses for it.
+      const expiresIn = this.session ? new Date(this.session.expiresAt).getTime() - Date.now() : 0;
+      if (this.session?.refreshToken && expiresIn < RENEW_BEFORE_MS) await this.renew();
       if (this.session) await this.work();
     } catch (error) {
       if (error instanceof ApiError && error.status === 401) {
-        this.session = undefined;
-        await save("session.json", null);
-        this.update({ connection: { state: "expired", reason: error.message }, assets: [] });
+        // A rejected access token gets one renewal attempt before asking to pair again.
+        const renewed =
+          error.code === "TOKEN_EXPIRED" &&
+          (await this.renew().then(
+            () => true,
+            () => false,
+          ));
+        if (!renewed) {
+          this.session = undefined;
+          await save("session.json", null);
+          this.update({ connection: { state: "expired", reason: error.message }, assets: [] });
+        }
       } else {
         this.update({ error: error instanceof Error ? error.message : String(error) });
       }
     } finally {
       this.busy = false;
     }
+  }
+
+  /**
+   * Exchanges the refresh token for a new access/refresh pair. Throws when the connection has
+   * ended (revoked, or unused past its limit); the caller then asks to pair again.
+   */
+  private async renew() {
+    const current = this.session;
+    if (!current?.refreshToken || !valid(current.refreshExpiresAt))
+      throw new ApiError(401, "REFRESH_INVALID", "Connection expired; connect again");
+    const next = await SonderApi.refresh(current.refreshToken);
+    this.session = { ...current, ...next };
+    await save("session.json", this.session);
+    this.update({
+      connection: { state: "active", user: current.user, expiresAt: shownExpiry(this.session) },
+    });
   }
 
   private async pollPairing() {
@@ -278,10 +318,17 @@ export class ConnectorRuntime {
       });
       return;
     }
-    this.session = { token: result.token, expiresAt: result.expiresAt, user: result.user };
+    this.session = {
+      token: result.token,
+      expiresAt: result.expiresAt,
+      user: result.user,
+      ...(result.refreshToken
+        ? { refreshToken: result.refreshToken, refreshExpiresAt: result.refreshExpiresAt }
+        : {}),
+    };
     await save("session.json", this.session);
     this.update({
-      connection: { state: "active", user: result.user, expiresAt: result.expiresAt },
+      connection: { state: "active", user: result.user, expiresAt: shownExpiry(this.session) },
       error: undefined,
     });
   }

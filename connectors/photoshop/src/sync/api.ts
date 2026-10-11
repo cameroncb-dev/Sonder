@@ -8,6 +8,7 @@ import {
   HeartbeatResponse,
   PairPollResponse,
   PairStartResponse,
+  RefreshResponse,
 } from "@sonder/contracts";
 import type { z } from "zod";
 
@@ -62,6 +63,10 @@ export class SonderApi {
 
   static pairStart(manifest: ConnectorManifest) {
     return request("/api/connector/pair/start", { json: { manifest } }, PairStartResponse);
+  }
+
+  static refresh(refreshToken: string) {
+    return request("/api/connector/refresh", { json: { refreshToken } }, RefreshResponse);
   }
 
   static pairPoll(sessionId: string, pollSecret: string) {

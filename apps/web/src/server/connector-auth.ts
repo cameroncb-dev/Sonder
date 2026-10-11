@@ -6,8 +6,27 @@ import { createAdminClient } from "@/lib/supabase/server";
 
 import { HttpError } from "./http";
 
-/** Connector tokens expire; the plugin must pair again afterwards. */
-export const CONNECTOR_TOKEN_TTL_MS = 12 * 60 * 60 * 1000;
+/** Access tokens are short-lived; the connector renews them with its refresh token. */
+export const CONNECTOR_TOKEN_TTL_MS = 60 * 60 * 1000;
+/** A remembered connection lapses after this long without renewing (i.e. without use). */
+export const REFRESH_TOKEN_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+
+/** A fresh access/refresh pair and the columns that store them (hashed). */
+export function issueTokens() {
+  const token = newSecret();
+  const refreshToken = newSecret();
+  const expiresAt = new Date(Date.now() + CONNECTOR_TOKEN_TTL_MS).toISOString();
+  const refreshExpiresAt = new Date(Date.now() + REFRESH_TOKEN_TTL_MS).toISOString();
+  return {
+    body: { token, expiresAt, refreshToken, refreshExpiresAt },
+    columns: {
+      token_hash: sha256(token),
+      expires_at: expiresAt,
+      refresh_token_hash: sha256(refreshToken),
+      refresh_expires_at: refreshExpiresAt,
+    },
+  };
+}
 export const PAIRING_TTL_MS = 10 * 60 * 1000;
 
 const CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
