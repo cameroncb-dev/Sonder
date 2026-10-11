@@ -70,11 +70,12 @@ export function Inspector({
     return () => clearInterval(timer);
   }, [pending]);
 
-  const run = async (fn: () => Promise<unknown>, done: string) => {
+  /** Runs an action. Jobs report progress under Recent activity, so they pass no message. */
+  const run = async (fn: () => Promise<unknown>, done?: string) => {
     setNotice(null);
     try {
       await fn();
-      setNotice(done);
+      setNotice(done ?? null);
       setReloadKey((k) => k + 1);
       onChanged();
     } catch (e) {
@@ -145,7 +146,7 @@ export function Inspector({
                   message ? { message } : {},
                 );
                 setMessage("");
-              }, "Capture queued")
+              })
             }
           >
             Capture
@@ -169,12 +170,10 @@ export function Inspector({
                     className="rounded border border-zinc-300 px-2 py-0.5 text-xs disabled:opacity-40 dark:border-zinc-700"
                     disabled={!canSwitch}
                     onClick={() =>
-                      void run(
-                        () =>
-                          api("POST", `/api/projects/${projectId}/assets/${asset.id}/checkout`, {
-                            branchId: b.id,
-                          }),
-                        `Switching to ${b.name}…`,
+                      void run(() =>
+                        api("POST", `/api/projects/${projectId}/assets/${asset.id}/checkout`, {
+                          branchId: b.id,
+                        }),
                       )
                     }
                   >
@@ -209,13 +208,11 @@ export function Inspector({
               <button
                 className="self-start rounded border border-red-300 px-2 py-0.5 text-xs text-red-700 dark:border-red-800 dark:text-red-300"
                 onClick={() =>
-                  void run(
-                    () =>
-                      api("POST", `/api/projects/${projectId}/assets/${asset.id}/checkout`, {
-                        branchId: lastFailedCheckout.params.branchId,
-                        force: true,
-                      }),
-                    "Switching without capturing…",
+                  void run(() =>
+                    api("POST", `/api/projects/${projectId}/assets/${asset.id}/checkout`, {
+                      branchId: lastFailedCheckout.params.branchId,
+                      force: true,
+                    }),
                   )
                 }
               >
@@ -274,9 +271,9 @@ export function Inspector({
           </p>
           <table className="w-full text-left text-[11px]">
             <tbody>
-              {checkpoint.elements.flatMap((e) =>
+              {checkpoint.elements.flatMap((e, i) =>
                 e.properties.map((p) => (
-                  <tr key={`${e.name}-${p.type}`}>
+                  <tr key={`${String(e.native.data.layerId ?? i)}-${p.type}`}>
                     <td className="pr-2 text-zinc-500">{e.name}</td>
                     <td className="pr-2 font-mono">{p.type}</td>
                     <td className="font-mono">{formatValue(p.value)}</td>
