@@ -1,5 +1,51 @@
 # Progress
 
+## Phase 6 — Shared Themes, Project Directions and Canvas Additions
+
+Status: **in progress.** Branch: `phase-6-themes-canvas`.
+
+Scope (from `Design_Plan.md` §15, plus canvas additions the user requested on 2026-10-11):
+
+1. **Canvas additions (first, then a check-in with the user):**
+   - styled notes (shape, color, font chosen before placing);
+   - free text anywhere;
+   - resizable sections that carry their cards;
+   - a font picker (system fonts plus about 50 Google Fonts, loaded on demand).
+2. **Shared themes:** primary, background, text and accent color roles; explicit role-to-layer
+   mappings per asset; per-asset candidates and previews; inclusion and exclusion; approval
+   of the collection; per-asset status; visible partial failures.
+3. **Directions:** named collections of exact checkpoints that stay stable as branches move.
+
+### Part 1 — canvas additions: built, awaiting the user's check
+
+- **Left toolbox** (`toolbox.tsx`) with collapsible Notes, Text, Sections and References
+  panels, toggled by a waffle button in the header. Visibility, open panels and chosen styles
+  are remembered per browser. **Add note** and **Add reference** moved here from the header.
+- **Place by clicking:** choose a style, click **Place …**, then click the canvas (crosshair
+  cursor; Esc cancels). The new card's text takes focus.
+- **Notes:** sticky, rounded, circle and diamond shapes; 7 colors; any font.
+- **Text:** small, medium and heading sizes; 7 colors; any font; grows with its content.
+- **Sections:** titled, tinted, resizable (corner handles), drawn beneath cards. Dragging a
+  section carries the cards whose centre lies inside it. Deleting a section leaves its cards.
+- **Restyle later:** a selected note, text or section shows a floating style bar.
+- **Fonts:** 12 system fonts and 55 Google Fonts. The picker shows each name in its own
+  typeface (one subset request). A font downloads in full only when used.
+- **Saving:** every change carries the card's version (optimistic concurrency). Multi-card
+  drags save every moved card.
+- **Server:** migration `20261015000000_canvas_text_and_sections.sql` adds the `text` and
+  `section` item types. The API validates content per type (shapes, colors, sizes, known
+  fonts); old notes get default styles.
+- **Checks:** unit 10/10 (content rules, all fonts), integration 35/35, E2E all passed (2
+  new: styled cards round-trip; unknown fonts and shapes refused; section resize persists),
+  typecheck, lint, build.
+- **Not verified automatically:** how it looks in a browser, placement clicks, and sections
+  carrying cards while dragged (client-side logic). These are for the user's check.
+
+Notes:
+
+- Google Fonts are fetched from Google's servers by each viewer's browser when a font is
+  first shown. System fonts need no download.
+
 ## Phase 5 — Selective Combination and Approval
 
 Status: **complete, pending your interactive test.** Every acceptance criterion is verified end

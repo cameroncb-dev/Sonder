@@ -1,19 +1,24 @@
 import { z } from "zod";
 
+import { NoteContent, SECTION_SIZE, SectionContent, TextContent } from "@/lib/canvas-style";
 import { requireProjectRole, requireUser } from "@/server/auth";
 import { handler, HttpError, parseJson, unwrap } from "@/server/http";
 
+const Position = { x: z.number(), y: z.number() };
+
 const CreateItem = z.discriminatedUnion("itemType", [
+  z.object({ itemType: z.literal("note"), ...Position, content: NoteContent }),
+  z.object({ itemType: z.literal("text"), ...Position, content: TextContent }),
   z.object({
-    itemType: z.literal("note"),
-    x: z.number(),
-    y: z.number(),
-    content: z.object({ text: z.string().max(5000) }),
+    itemType: z.literal("section"),
+    ...Position,
+    width: z.number().min(120).max(10000).default(SECTION_SIZE.width),
+    height: z.number().min(80).max(10000).default(SECTION_SIZE.height),
+    content: SectionContent,
   }),
   z.object({
     itemType: z.literal("reference"),
-    x: z.number(),
-    y: z.number(),
+    ...Position,
     content: z.object({ path: z.string().min(1).max(500), name: z.string().max(300) }),
   }),
 ]);
@@ -35,6 +40,7 @@ export const POST = handler(
           item_type: body.itemType,
           x: body.x,
           y: body.y,
+          ...(body.itemType === "section" ? { width: body.width, height: body.height } : {}),
           content: body.content,
           updated_by: user.id,
         })

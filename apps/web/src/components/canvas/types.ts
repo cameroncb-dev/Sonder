@@ -24,7 +24,7 @@ export interface CanvasAsset {
 
 export interface CanvasItem {
   id: string;
-  item_type: "asset" | "reference" | "note" | "direction" | "theme";
+  item_type: "asset" | "reference" | "note" | "text" | "section" | "direction" | "theme";
   ref_id: string | null;
   x: number;
   y: number;

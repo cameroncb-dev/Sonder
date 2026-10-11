@@ -523,6 +523,64 @@ async function main() {
       persisted?.x === 640 && persisted?.y === 360 && persisted?.version === 2,
     );
 
+    // --- Phase 6 canvas additions: styled notes, free text, sections ---
+    const itemsUrl = `/api/projects/${projectId}/canvas/items`;
+    const styled = await owner.api("POST", itemsUrl, {
+      itemType: "note",
+      x: 900,
+      y: 100,
+      content: { text: "Diamond", shape: "diamond", color: "purple", font: "Playfair Display" },
+    });
+    const freeText = await owner.api("POST", itemsUrl, {
+      itemType: "text",
+      x: 900,
+      y: 400,
+      content: { text: "Launch ideas", font: "Bebas Neue", size: "heading", color: "blue" },
+    });
+    const section = await owner.api("POST", itemsUrl, {
+      itemType: "section",
+      x: 850,
+      y: 50,
+      content: { title: "Moodboard", color: "green" },
+    });
+    const badFont = await owner.api("POST", itemsUrl, {
+      itemType: "text",
+      x: 0,
+      y: 0,
+      content: { text: "x", font: "Not A Font" },
+    });
+    const badShape = await owner.api("PATCH", `${itemsUrl}/${styled.body.item?.id}`, {
+      version: styled.body.item?.version,
+      content: { text: "x", shape: "hexagon" },
+    });
+    const resized = await owner.api("PATCH", `${itemsUrl}/${section.body.item?.id}`, {
+      version: section.body.item?.version,
+      width: 900,
+      height: 600,
+    });
+    const afterReload = (await owner.api("GET", `/api/projects/${projectId}/canvas`)).body;
+    const byId = (id: string) => afterReload.items.find((i: { id: string }) => i.id === id);
+    check(
+      "styled notes, free text and sections save and reload with their style",
+      styled.status === 201 &&
+        freeText.status === 201 &&
+        section.status === 201 &&
+        byId(styled.body.item.id)?.content.shape === "diamond" &&
+        byId(styled.body.item.id)?.content.font === "Playfair Display" &&
+        byId(freeText.body.item.id)?.content.size === "heading" &&
+        byId(section.body.item.id)?.content.title === "Moodboard",
+      [styled.status, freeText.status, section.status],
+    );
+    check(
+      "unknown fonts and shapes are refused; a resized section keeps its size",
+      badFont.status === 400 &&
+        badShape.status === 400 &&
+        resized.status === 200 &&
+        byId(section.body.item.id)?.width === 900 &&
+        byId(section.body.item.id)?.height === 600,
+      [badFont.status, badShape.status, resized.status],
+    );
+
     const parentCount = async () =>
       (
         await admin

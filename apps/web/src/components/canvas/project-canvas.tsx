@@ -19,9 +19,11 @@ import Link from "next/link";
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 
 import { api, ApiClientError } from "@/lib/api-client";
+import { NoteContent, SECTION_SIZE, SectionContent, TextContent } from "@/lib/canvas-style";
 import { createClient } from "@/lib/supabase/client";
 
 import { Inspector } from "./inspector";
+import { type PlacingTool, Toolbox, WaffleButton } from "./toolbox";
 import { nodeTypes } from "./nodes";
 import type { CanvasAsset, CanvasData, CanvasItem } from "./types";
 
@@ -44,34 +46,90 @@ function useColorMode(): "light" | "dark" {
   );
 }
 
-function toNodes(canvas: CanvasData, onSaveNote: (item: CanvasItem, text: string) => void): Node[] {
+interface CardHandlers {
+  save: (itemId: string, content: Record<string, unknown>) => void;
+  resize: (itemId: string, box: { x: number; y: number; width: number; height: number }) => void;
+}
+
+/** Parses saved content, falling back to defaults for cards saved before styles existed. */
+function parsed<T>(
+  schema: { safeParse: (v: unknown) => { success: boolean; data?: T } },
+  value: unknown,
+  fallback: T,
+): T {
+  const result = schema.safeParse(value);
+  return result.success ? result.data! : fallback;
+}
+
+function toNodes(canvas: CanvasData, handlers: CardHandlers, focusId: string | null): Node[] {
   const draggable = canvas.role !== "reviewer";
-  return canvas.items.flatMap((item): Node[] => {
+  // Sections first and beneath everything, so cards on top of them stay clickable.
+  const items = [...canvas.items].sort(
+    (a, b) => Number(b.item_type === "section") - Number(a.item_type === "section"),
+  );
+  return items.flatMap((item): Node[] => {
     const position = { x: item.x, y: item.y };
-    if (item.item_type === "asset") {
-      const asset = canvas.assets.find((a) => a.id === item.ref_id);
-      return asset ? [{ id: item.id, type: "asset", position, draggable, data: { asset } }] : [];
+    const common = { id: item.id, position, draggable };
+    const editable = {
+      editable: draggable,
+      autoFocus: item.id === focusId,
+      onSave: (content: Record<string, unknown>) => handlers.save(item.id, content),
+    };
+    const text = String(item.content.text ?? "");
+    switch (item.item_type) {
+      case "asset": {
+        const asset = canvas.assets.find((a) => a.id === item.ref_id);
+        return asset ? [{ ...common, type: "asset", data: { asset } }] : [];
+      }
+      case "note":
+        return [
+          {
+            ...common,
+            type: "note",
+            data: {
+              ...editable,
+              content: parsed(NoteContent, item.content, NoteContent.parse({ text })),
+            },
+          },
+        ];
+      case "text":
+        return [
+          {
+            ...common,
+            type: "text",
+            data: {
+              ...editable,
+              content: parsed(TextContent, item.content, TextContent.parse({ text })),
+            },
+          },
+        ];
+      case "section":
+        return [
+          {
+            ...common,
+            type: "section",
+            zIndex: -1,
+            width: item.width ?? SECTION_SIZE.width,
+            height: item.height ?? SECTION_SIZE.height,
+            data: {
+              ...editable,
+              content: parsed(SectionContent, item.content, SectionContent.parse({ title: "" })),
+              onResize: (box: { x: number; y: number; width: number; height: number }) =>
+                handlers.resize(item.id, box),
+            },
+          },
+        ];
+      case "reference":
+        return [
+          {
+            ...common,
+            type: "reference",
+            data: { name: String(item.content.name ?? ""), url: item.url ?? null },
+          },
+        ];
+      default:
+        return [];
     }
-    if (item.item_type === "note") {
-      const data = {
-        text: String(item.content.text ?? ""),
-        editable: draggable,
-        onSave: (text: string) => onSaveNote(item, text),
-      };
-      return [{ id: item.id, type: "note", position, draggable, data }];
-    }
-    if (item.item_type === "reference") {
-      return [
-        {
-          id: item.id,
-          type: "reference",
-          position,
-          draggable,
-          data: { name: String(item.content.name ?? ""), url: item.url ?? null },
-        },
-      ];
-    }
-    return [];
   });
 }
 
@@ -93,6 +151,16 @@ function CanvasInner({ projectId }: { projectId: string }) {
   /** Document awaiting delete confirmation in the canvas popup. */
   const [pendingDelete, setPendingDelete] = useState<CanvasAsset | null>(null);
   const [deleting, setDeleting] = useState(false);
+  /** Card style chosen in the toolbox, waiting for a click on the canvas. */
+  const [placing, setPlacing] = useState<PlacingTool | null>(null);
+  const [toolsOpen, setToolsOpen] = useState(true);
+  /** A card just placed, whose text should take focus once it renders. */
+  const focusId = useRef<string | null>(null);
+  /** Cards inside a section being dragged, with their positions when the drag began. */
+  const carried = useRef<{
+    start: { x: number; y: number };
+    cards: Map<string, { x: number; y: number }>;
+  } | null>(null);
   /** Full reload: positions, cards and connections. */
   const [reloadKey, setReloadKey] = useState(0);
   /** Soft refresh: asset status and previews only, never positions. */
@@ -108,26 +176,43 @@ function CanvasInner({ projectId }: { projectId: string }) {
 
   const report = (e: unknown) => setNotice(e instanceof Error ? e.message : String(e));
 
-  async function saveNote(item: CanvasItem, text: string) {
+  /** Saves one card's fields with its version; on a conflict, reloads the latest layout. */
+  async function patchItem(itemId: string, fields: Record<string, unknown>) {
     try {
       const { item: saved } = await api<{ item: CanvasItem }>(
         "PATCH",
-        `${base}/canvas/items/${item.id}`,
-        {
-          version: versions.current.get(item.id) ?? item.version,
-          content: { ...item.content, text },
-        },
+        `${base}/canvas/items/${itemId}`,
+        { version: versions.current.get(itemId), ...fields },
       );
       versions.current.set(saved.id, saved.version);
     } catch (e) {
       setNotice(
         e instanceof ApiClientError && e.status === 409
-          ? "That note changed elsewhere; reloaded."
-          : String(e),
+          ? "That card changed elsewhere; reloaded the latest version."
+          : e instanceof Error
+            ? e.message
+            : String(e),
       );
       reload();
     }
   }
+
+  const handlers: CardHandlers = {
+    save: (itemId, content) => {
+      // Show style changes immediately; the save confirms them.
+      setNodes((ns) =>
+        ns.map((n) => (n.id === itemId ? { ...n, data: { ...n.data, content } } : n)),
+      );
+      void patchItem(itemId, { content });
+    },
+    resize: (itemId, box) =>
+      void patchItem(itemId, {
+        x: Math.round(box.x),
+        y: Math.round(box.y),
+        width: Math.round(box.width),
+        height: Math.round(box.height),
+      }),
+  };
 
   useEffect(() => {
     let cancelled = false;
@@ -136,7 +221,8 @@ function CanvasInner({ projectId }: { projectId: string }) {
         if (cancelled) return;
         for (const item of canvas.items) versions.current.set(item.id, item.version);
         setData(canvas);
-        setNodes(toNodes(canvas, (item, text) => void saveNote(item, text)));
+        setNodes(toNodes(canvas, handlers, focusId.current));
+        focusId.current = null;
         setEdges(toEdges(canvas));
         if (fitPending.current) {
           fitPending.current = false;
@@ -148,7 +234,7 @@ function CanvasInner({ projectId }: { projectId: string }) {
     return () => {
       cancelled = true;
     };
-    // saveNote only reads refs and stable setters.
+    // The handlers only read refs and stable setters.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [base, reloadKey, setNodes, setEdges]);
 
@@ -186,30 +272,74 @@ function CanvasInner({ projectId }: { projectId: string }) {
     return () => clearInterval(timer);
   }, []);
 
-  async function onNodeDragStop(_event: unknown, node: Node) {
-    try {
-      const { item } = await api<{ item: CanvasItem }>("PATCH", `${base}/canvas/items/${node.id}`, {
-        version: versions.current.get(node.id),
-        x: Math.round(node.position.x),
-        y: Math.round(node.position.y),
-      });
-      versions.current.set(item.id, item.version);
-    } catch (e) {
-      if (e instanceof ApiClientError && e.status === 409) {
-        const current = (e.details as { current?: CanvasItem } | undefined)?.current;
-        if (current) {
-          versions.current.set(current.id, current.version);
-          setNodes((ns) =>
-            ns.map((n) =>
-              n.id === current.id ? { ...n, position: { x: current.x, y: current.y } } : n,
-            ),
-          );
-        }
-        setNotice("Someone else moved that card. It has been restored to their position.");
-      } else {
-        report(e);
-      }
+  /** A section carries the cards whose centre lies inside it. */
+  function onNodeDragStart(_event: unknown, node: Node) {
+    carried.current = null;
+    if (node.type !== "section") return;
+    const width = node.measured?.width ?? node.width ?? 0;
+    const height = node.measured?.height ?? node.height ?? 0;
+    const cards = new Map<string, { x: number; y: number }>();
+    for (const other of flow.getNodes()) {
+      if (other.id === node.id || other.type === "section" || other.selected) continue;
+      const cx = other.position.x + (other.measured?.width ?? 0) / 2;
+      const cy = other.position.y + (other.measured?.height ?? 0) / 2;
+      if (
+        cx >= node.position.x &&
+        cx <= node.position.x + width &&
+        cy >= node.position.y &&
+        cy <= node.position.y + height
+      )
+        cards.set(other.id, { ...other.position });
     }
+    carried.current = { start: { ...node.position }, cards };
+  }
+
+  function onNodeDrag(_event: unknown, node: Node) {
+    const carry = carried.current;
+    if (!carry || node.type !== "section") return;
+    const dx = node.position.x - carry.start.x;
+    const dy = node.position.y - carry.start.y;
+    setNodes((ns) =>
+      ns.map((n) => {
+        const from = carry.cards.get(n.id);
+        return from ? { ...n, position: { x: from.x + dx, y: from.y + dy } } : n;
+      }),
+    );
+  }
+
+  async function onNodeDragStop(_event: unknown, node: Node, dragged: Node[]) {
+    const moved = new Map(dragged.map((n) => [n.id, n.position]));
+    moved.set(node.id, node.position);
+    const carry = carried.current;
+    carried.current = null;
+    if (carry) {
+      const dx = node.position.x - carry.start.x;
+      const dy = node.position.y - carry.start.y;
+      for (const [id, from] of carry.cards) moved.set(id, { x: from.x + dx, y: from.y + dy });
+    }
+    await Promise.all(
+      [...moved].map(([id, position]) =>
+        api<{ item: CanvasItem }>("PATCH", `${base}/canvas/items/${id}`, {
+          version: versions.current.get(id),
+          x: Math.round(position.x),
+          y: Math.round(position.y),
+        })
+          .then(({ item }) => versions.current.set(item.id, item.version))
+          .catch((e) => {
+            if (!(e instanceof ApiClientError && e.status === 409)) throw e;
+            const current = (e.details as { current?: CanvasItem } | undefined)?.current;
+            if (current) {
+              versions.current.set(current.id, current.version);
+              setNodes((ns) =>
+                ns.map((n) =>
+                  n.id === current.id ? { ...n, position: { x: current.x, y: current.y } } : n,
+                ),
+              );
+            }
+            setNotice("Someone else moved that card. It has been restored to their position.");
+          }),
+      ),
+    ).catch(report);
   }
 
   const onConnect: OnConnect = async (connection) => {
@@ -293,15 +423,53 @@ function CanvasInner({ projectId }: { projectId: string }) {
     return { x: x + step * 32, y: y + step * 32 };
   };
 
-  async function addNote() {
-    const { x, y } = center();
+  /** Places the toolbox's chosen card where the canvas was clicked. */
+  async function place(tool: PlacingTool, at: { x: number; y: number }) {
+    setPlacing(null);
+    const body =
+      tool.kind === "section"
+        ? {
+            itemType: "section",
+            x: at.x,
+            y: at.y,
+            ...SECTION_SIZE,
+            content: { title: "", color: tool.color },
+          }
+        : { itemType: tool.kind, x: at.x, y: at.y, content: tool.content };
     try {
-      await api("POST", `${base}/canvas/items`, { itemType: "note", x, y, content: { text: "" } });
+      const { item } = await api<{ item: CanvasItem }>("POST", `${base}/canvas/items`, body);
+      focusId.current = item.id;
       reload();
     } catch (e) {
       report(e);
     }
   }
+
+  useEffect(() => {
+    if (!placing) return;
+    const cancel = (e: KeyboardEvent) => e.key === "Escape" && setPlacing(null);
+    window.addEventListener("keydown", cancel);
+    return () => window.removeEventListener("keydown", cancel);
+  }, [placing]);
+
+  // The toolbox's visibility is remembered in this browser.
+  useEffect(() => {
+    try {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- one-time restore from storage
+      setToolsOpen(window.localStorage.getItem("sonder.toolsOpen") !== "false");
+    } catch {
+      // Storage unavailable: keep the default.
+    }
+  }, []);
+  const toggleTools = () =>
+    setToolsOpen((open) => {
+      try {
+        window.localStorage.setItem("sonder.toolsOpen", String(!open));
+      } catch {
+        // Ignore: the choice lasts for this visit.
+      }
+      return !open;
+    });
 
   async function uploadReference(file: File) {
     const { x, y } = center();
@@ -330,6 +498,7 @@ function CanvasInner({ projectId }: { projectId: string }) {
     <div className="flex h-dvh flex-col">
       <header className="flex flex-wrap items-center justify-between gap-2 border-b border-zinc-200 px-4 py-2 dark:border-zinc-800">
         <div className="flex items-center gap-3">
+          {canEdit && <WaffleButton open={toolsOpen} onToggle={toggleTools} />}
           <Link href="/projects" className="text-sm text-zinc-500 hover:underline">
             Projects
           </Link>
@@ -348,18 +517,6 @@ function CanvasInner({ projectId }: { projectId: string }) {
           )}
           {canEdit && (
             <>
-              <button
-                className="rounded border border-zinc-300 px-3 py-1 dark:border-zinc-700"
-                onClick={() => void addNote()}
-              >
-                Add note
-              </button>
-              <button
-                className="rounded border border-zinc-300 px-3 py-1 dark:border-zinc-700"
-                onClick={() => fileInput.current?.click()}
-              >
-                Add reference
-              </button>
               <input
                 ref={fileInput}
                 type="file"
@@ -376,14 +533,27 @@ function CanvasInner({ projectId }: { projectId: string }) {
         </div>
       </header>
       <div className="flex min-h-0 flex-1">
-        <div className="min-w-0 flex-1">
+        {canEdit && toolsOpen && (
+          <Toolbox
+            placing={placing}
+            onPlace={setPlacing}
+            onCancel={() => setPlacing(null)}
+            onAddReference={() => fileInput.current?.click()}
+          />
+        )}
+        <div
+          className={`min-w-0 flex-1 ${placing ? "[&_.react-flow__pane]:!cursor-crosshair" : ""}`}
+        >
           <ReactFlow
             nodes={nodes}
             edges={edges}
             nodeTypes={nodeTypes}
             onNodesChange={onNodesChange}
             onEdgesChange={onEdgesChange}
-            onNodeDragStop={(e, node) => void onNodeDragStop(e, node)}
+            onNodeDragStart={onNodeDragStart}
+            onNodeDrag={onNodeDrag}
+            onNodeDragStop={(e, node, dragged) => void onNodeDragStop(e, node, dragged)}
+            elevateNodesOnSelect={false}
             onConnect={canEdit ? onConnect : undefined}
             onEdgesDelete={canEdit ? onEdgesDelete : undefined}
             onNodesDelete={canEdit ? onNodesDelete : undefined}
@@ -393,7 +563,14 @@ function CanvasInner({ projectId }: { projectId: string }) {
                 node.type === "asset" ? (node.data as { asset: { id: string } }).asset.id : null,
               )
             }
-            onPaneClick={() => setSelectedAsset(null)}
+            onPaneClick={(event) => {
+              if (placing)
+                return void place(
+                  placing,
+                  flow.screenToFlowPosition({ x: event.clientX, y: event.clientY }),
+                );
+              setSelectedAsset(null);
+            }}
             nodesConnectable={canEdit}
             colorMode={colorMode}
             fitView

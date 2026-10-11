@@ -526,6 +526,20 @@ Coordinate changes across assets through connector capabilities.
 - [ ] Track per-asset execution status.
 - [ ] Save named directions using exact checkpoint IDs.
 
+**Canvas additions (added 2026-10-11 at the user's request):**
+
+- [ ] Styled notes: choose shape (square sticky, rounded rectangle, circle, diamond), color
+      and font before placing, then click the canvas to place. Style can be changed later.
+- [ ] Free text: click anywhere on the canvas to type. Font, size (small, medium, heading)
+      and color are adjustable.
+- [ ] Sections: labelled, tinted, resizable frames. Cards inside a section move with it.
+      Deleting a section keeps its cards.
+- [ ] Fonts: a picker with system fonts and about 50 Google Fonts, loaded on first use.
+      Applies to notes and text.
+
+These are canvas presentation only. They never affect application documents or version
+history, and they keep optimistic concurrency on every save.
+
 The demo uses two Photoshop documents.
 
 Shared orchestration must use connector capabilities instead of assuming PSD-specific behavior.
@@ -548,6 +562,8 @@ Multi-asset operations are not atomic.
 - A direction retrieves the intended checkpoint collection.
 - Partial failures are visible.
 - Unsupported assets cannot receive incompatible operations.
+- Notes take the chosen shape, color and font. Text can be placed anywhere. Sections carry
+  their contents when moved. All of it persists after reload.
 
 ## 16. Phase 7 — Computer Vision
 
