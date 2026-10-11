@@ -87,10 +87,25 @@ Click the document card to open the inspector:
 
 On the canvas:
 
-- **Add note** and **Add reference** (PNG, JPEG or WebP) place new cards.
+- Use the tool rail on the left to place notes, text, sections, themes and directions, or to
+  add a reference image (PNG, JPEG or WebP).
 - Drag cards to arrange them. Positions are saved.
 - Drag from one card's edge dot to another to connect them. Connections are for organizing
   only and never change version history.
 - Select a note, reference or connection and press Delete to remove it.
 
 Captures and branch switches run only while the Sonder panel is open and connected.
+
+### 8. Seed a demo project
+
+With Photoshop open and the panel connected, this builds a ready-made project (as the
+connected user) for showing branches:
+
+```sh
+pnpm --filter web seed:branching-demo -- "Branching Demo"
+```
+
+It creates "Spring Poster" with `main` (three versions), `warm-launch` and `night-edition`
+(both from the second version), and `warm-serif` (a branch of `warm-launch`), plus notes on
+the canvas suggesting what to try. It takes about two minutes and leaves `main` open in
+Photoshop.
