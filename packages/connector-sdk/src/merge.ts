@@ -43,7 +43,12 @@ export interface MergeRow {
 export interface StructuralChange {
   key: string;
   name: string;
-  change: "added_in_source" | "removed_in_source" | "added_in_target" | "removed_in_target";
+  change:
+    | "added_in_source"
+    | "removed_in_source"
+    | "added_in_target"
+    | "removed_in_target"
+    | "added_in_both";
 }
 
 export interface MergeResult {
@@ -101,9 +106,12 @@ export function mergeElements(
     if (eb && !et && es) structural.push({ key, name, change: "removed_in_target" });
     if (!eb && es && !et) structural.push({ key, name, change: "added_in_source" });
     if (!eb && et && !es) structural.push({ key, name, change: "added_in_target" });
+    // Elements added on both sides are independent additions, even when the application
+    // reuses the same native id for them (Photoshop numbers new layers per document).
+    if (!eb && et && es) structural.push({ key, name, change: "added_in_both" });
     // Combination edits elements that exist in the target and the source; it never adds or
     // removes them, so everything else stays exactly as the target snapshot has it.
-    if (!et || !es) continue;
+    if (!eb || !et || !es) continue;
 
     const kind = et.kind;
     const types = new Set(

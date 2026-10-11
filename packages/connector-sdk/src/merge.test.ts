@@ -104,6 +104,16 @@ describe("mergeElements", () => {
     expect(merge.rows.some((r) => r.name === "Caption" || r.kind === "solid_fill")).toBe(false);
   });
 
+  it("treats elements added on both sides as independent, never as a conflict", () => {
+    // Both branches added a fill and Photoshop gave each the same next layer id.
+    const target = [...base, fill(5, "#000000")];
+    const source = [...base, fill(5, "#F41032")];
+    const merge = mergeElements(base, target, source, options);
+    expect(merge.structural).toEqual([expect.objectContaining({ change: "added_in_both" })]);
+    expect(merge.rows.some((r) => r.status === "conflict")).toBe(false);
+    expect(planCombination(merge, {}).changes).toEqual([]);
+  });
+
   it("refuses to take source values the connector cannot edit", () => {
     const locked = [fill(1, "#FFFFFF"), { ...headline("ArialMT"), editable: false }];
     const merge = mergeElements(base, locked, [fill(1, "#FFFFFF"), headline("Futura")], options);

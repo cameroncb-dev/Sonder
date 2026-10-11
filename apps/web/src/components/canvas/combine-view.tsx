@@ -20,7 +20,7 @@ const STATUS_LABEL: Record<CombineRow["status"], string> = {
   target: "Changed on target",
   source: "Changed on source",
   both_same: "Same change on both",
-  conflict: "Conflict",
+  conflict: "Conflict — choose one",
 };
 
 const show = (value: unknown) => (value === undefined ? "—" : formatValue(value));
@@ -391,12 +391,22 @@ export function CombineView({
                       Create candidate ({changes.length}{" "}
                       {changes.length === 1 ? "change" : "changes"})
                     </button>
-                    {unresolved.length > 0 && (
+                    {unresolved.length > 0 ? (
                       <span className="text-xs text-red-600">
-                        Resolve {unresolved.length}{" "}
-                        {unresolved.length === 1 ? "conflict" : "conflicts"} first.
+                        {unresolved.length === 1
+                          ? "1 property was"
+                          : `${unresolved.length} properties were`}{" "}
+                        changed differently on both branches. Pick &quot;keep{" "}
+                        {combination.target.branchName}&quot; or &quot;take{" "}
+                        {combination.source.branchName}&quot; in each red row.
                       </span>
-                    )}
+                    ) : changes.length === 0 ? (
+                      <span className="text-xs text-zinc-500">
+                        Nothing to combine: with these choices the result is identical to{" "}
+                        {combination.target.branchName}. Take at least one change from{" "}
+                        {combination.source.branchName}.
+                      </span>
+                    ) : null}
                     <span className="text-xs text-zinc-500">
                       Builds a separate copy in the app; your open document isn&apos;t changed.
                     </span>
