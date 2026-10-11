@@ -78,7 +78,7 @@ export interface Job {
   status: "queued" | "leased" | "succeeded" | "failed" | "cancelled";
   attempts: number;
   params: Record<string, unknown>;
-  error: { code?: string; message?: string } | null;
+  error: { code?: string; message?: string; issues?: Array<{ message?: string }> } | null;
   result: Record<string, unknown> | null;
   created_at: string;
 }

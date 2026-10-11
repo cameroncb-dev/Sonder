@@ -17,7 +17,10 @@ function jobSummary(job: Job): string {
   const label = JOB_LABELS[job.operation] ?? job.operation;
   const branch = typeof job.params.branchName === "string" ? ` to ${job.params.branchName}` : "";
   if (job.status === "failed")
-    return `${label}${branch} failed: ${job.error?.message ?? job.error?.code ?? "unknown error"}`;
+    return `${label}${branch} failed: ${
+      // Connector issues carry the readable sentence; the top-level message is prefixed with codes.
+      job.error?.issues?.[0]?.message ?? job.error?.message ?? job.error?.code ?? "unknown error"
+    }`;
   if (job.status === "queued") return `${label}${branch} waiting for the connector…`;
   if (job.status === "leased") return `${label}${branch} running (attempt ${job.attempts})…`;
   return `${label}${branch} ${job.status}`;

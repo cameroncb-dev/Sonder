@@ -293,7 +293,7 @@ export class ConnectorRuntime {
         if (differences.length) {
           throw new ConnectorError({
             code: "UNCAPTURED_CHANGES",
-            message: `"${openDoc.name}" has changes that were never captured. Capture them first, or switch with force.`,
+            message: `"${openDoc.name}" has changes that were never captured. Capture them first, or use Switch anyway.`,
             details: { differences },
           });
         }
