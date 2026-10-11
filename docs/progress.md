@@ -51,14 +51,13 @@ Supabase CLI 2.75.0, Docker 29.1.3, Photoshop 2021, 2025 and **2026 (27.8.0)**. 
 | **Local** Supabase (`supabase start`, Docker)                 | Migration applied; 3 private buckets and 3 policies present                                                                         |
 | `pnpm --filter web verify:supabase` against local stack       | 10/10 pass: connectivity, private buckets, sign-in, own-folder upload/download, cross-user upload denied, anonymous download denied |
 | **Hosted** Supabase project `Sonder` (`rihciqpkzdzpdsxmyaut`) | Linked; confirmed empty first (no buckets, public tables or users); `supabase db push` applied the migration                        |
-| `pnpm --filter web verify:supabase` against hosted project    | 10/10 pass (same checks); temporary user and file removed afterwards                                                                |
+| `pnpm --filter web verify:supabase` against hosted project    | 10/10 pass with the `sb_secret_…` key from `.env.local`; temporary user and file removed afterwards                                 |
 | Web `/api/health` with hosted config                          | `supabase.configured: true`                                                                                                         |
 
 ### Not verified
 
-- **New-style secret key.** The CLI only returns the `sb_secret_…` key masked, so the hosted
-  verification ran with the legacy `service_role` key, passed as a one-off environment variable
-  and never saved to disk. `SUPABASE_SECRET_KEY` in `apps/web/.env.local` is still empty.
+- **Hosted auth URL configuration.** The dashboard's Site URL and redirect allow-list can't be
+  read from the CLI, so they haven't been checked.
 - **Photoshop plugin loading.** UXP Developer Tool isn't installed, so the plugin has not been
   loaded in Photoshop and reading the active document name hasn't run. Also unverified: whether
   UXP allows plain-`http` `fetch` to `localhost` with the declared `network.domains`.
@@ -67,11 +66,9 @@ Supabase CLI 2.75.0, Docker 29.1.3, Photoshop 2021, 2025 and **2026 (27.8.0)**. 
 
 ### Blockers requiring user input
 
-1. **Supabase secret key.** Copy the `sb_secret_…` key from Project Settings → API Keys (click
-   Reveal) into `SUPABASE_SECRET_KEY` in `apps/web/.env.local`, then re-run
-   `pnpm --filter web verify:supabase`. Also set the dashboard's Authentication → URL
-   Configuration: Site URL `http://localhost:3000`, redirect URL
-   `http://localhost:3000/auth/callback`.
+1. **Supabase auth URLs.** In the dashboard, go to Authentication → URL Configuration and set
+   the Site URL to `http://localhost:3000` and the redirect URL to
+   `http://localhost:3000/auth/callback`, if that isn't done already.
 2. **UXP Developer Tool.** Install it from Creative Cloud, load
    `connectors/photoshop/plugin/manifest.json` in Photoshop 2026, and confirm the panel shows
    the document name (see `docs/setup.md` §5).
