@@ -12,7 +12,9 @@
     "verify:supabase": "node --env-file-if-exists=.env.local scripts/verify-supabase.mts",
     "test:integration": "vitest run --config vitest.integration.config.mts",
     "e2e:connector": "node --env-file-if-exists=.env.local scripts/e2e-connector.mts",
-    "seed:combine-demo": "node --env-file-if-exists=.env.local scripts/seed-combine-demo.mts"
+    "seed:combine-demo": "node --env-file-if-exists=.env.local scripts/seed-combine-demo.mts",
+    "seed:branching-demo": "node --env-file-if-exists=.env.local scripts/seed-branching-demo.mts",
+    "seed:feature-demo": "node --env-file-if-exists=.env.local scripts/seed-feature-demo.mts"
   },
   "dependencies": {
     "@sonder/connector-sdk": "workspace:*",

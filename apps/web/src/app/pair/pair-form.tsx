@@ -8,7 +8,7 @@ type State =
   | { kind: "done"; detail: string }
   | { kind: "error"; message: string; signIn?: boolean };
 
-export function PairForm() {
+export function PairForm({ onPaired }: { onPaired?: () => void } = {}) {
   const [code, setCode] = useState("");
   const [state, setState] = useState<State>({ kind: "idle" });
 
@@ -28,6 +28,7 @@ export function PairForm() {
     if (!response.ok || !body.session) {
       return setState({ kind: "error", message: body.error?.message ?? "Pairing failed" });
     }
+    onPaired?.();
     setState({
       kind: "done",
       detail: `${body.session.application} ${body.session.applicationVersion ?? ""}`.trim(),
@@ -35,32 +36,37 @@ export function PairForm() {
   }
 
   if (state.kind === "done") {
-    return <p className="text-sm">Connected {state.detail}. You can return to the plugin.</p>;
+    return (
+      <p
+        role="status"
+        className="rounded-xl border border-cyan/30 bg-cyan/10 px-4 py-3 text-sm text-cyan-100"
+      >
+        ✓ Connected {state.detail}. Return to the plugin to choose a project.
+      </p>
+    );
   }
   return (
     <form
-      className="flex flex-col gap-3"
+      className="flex flex-col flex-wrap gap-3 sm:flex-row"
       onSubmit={(event) => {
         event.preventDefault();
         void approve();
       }}
     >
       <input
-        className="rounded border border-zinc-300 px-3 py-2 text-center font-mono text-lg tracking-widest uppercase dark:border-zinc-700 dark:bg-zinc-900"
+        className="field flex-1 text-center font-mono !text-lg tracking-[0.3em] uppercase"
+        aria-label="Pairing code"
         placeholder="ABCD-2345"
         required
         pattern="[A-Za-z2-9]{4}-[A-Za-z2-9]{4}"
         value={code}
         onChange={(e) => setCode(e.target.value.toUpperCase())}
       />
-      <button
-        className="rounded bg-zinc-900 px-4 py-2 text-white disabled:opacity-50 dark:bg-white dark:text-black"
-        disabled={state.kind === "busy"}
-      >
-        Approve
+      <button className="btn-sonder !py-3" disabled={state.kind === "busy"}>
+        {state.kind === "busy" ? "Approving…" : "Approve"}
       </button>
       {state.kind === "error" && (
-        <p className="text-sm text-red-600">
+        <p role="alert" className="text-sm text-pink-300 sm:basis-full">
           {state.message}{" "}
           {state.signIn && (
             <a className="underline" href="/login?next=/pair">

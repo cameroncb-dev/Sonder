@@ -1,16 +1,13 @@
-import { PairForm } from "./pair-form";
+import { SiteNav } from "@/components/brand/site-nav";
 
+import { ConnectExperience } from "../connect/connect-experience";
+
+/** The plugin sends people here with a code: the Connect guide, opened at the code step. */
 export default function PairPage() {
   return (
-    <main className="mx-auto flex w-full max-w-sm flex-1 flex-col justify-center gap-6 px-6 py-16">
-      <div className="flex flex-col gap-2">
-        <h1 className="text-2xl font-semibold">Connect a plugin</h1>
-        <p className="text-sm text-zinc-600 dark:text-zinc-400">
-          Enter the code shown in the Sonder panel. The plugin will act as you in projects you can
-          edit, until its session expires.
-        </p>
-      </div>
-      <PairForm />
-    </main>
+    <div className="glow-field flex flex-1 flex-col">
+      <SiteNav />
+      <ConnectExperience initialStep={4} />
+    </div>
   );
 }

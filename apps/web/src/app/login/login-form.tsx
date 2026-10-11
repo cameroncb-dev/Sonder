@@ -38,52 +38,56 @@ export function LoginForm() {
 
   return (
     <form
-      className="flex flex-col gap-3"
+      className="mt-8 flex flex-col gap-4"
       onSubmit={(event) => {
         event.preventDefault();
         void submit("signIn");
       }}
     >
-      <label className="flex flex-col gap-1 text-sm">
+      <label className="flex flex-col gap-1.5 text-sm font-medium text-zinc-300">
         Email
         <input
-          className="rounded border border-zinc-300 px-3 py-2 dark:border-zinc-700 dark:bg-zinc-900"
+          className="field"
           type="email"
           autoComplete="email"
+          placeholder="you@studio.com"
           required
           value={email}
           onChange={(e) => setEmail(e.target.value)}
         />
       </label>
-      <label className="flex flex-col gap-1 text-sm">
+      <label className="flex flex-col gap-1.5 text-sm font-medium text-zinc-300">
         Password
         <input
-          className="rounded border border-zinc-300 px-3 py-2 dark:border-zinc-700 dark:bg-zinc-900"
+          className="field"
           type="password"
           autoComplete="current-password"
+          placeholder="At least 8 characters"
           required
           minLength={8}
           value={password}
           onChange={(e) => setPassword(e.target.value)}
         />
       </label>
-      <div className="flex gap-2">
-        <button
-          className="rounded bg-zinc-900 px-4 py-2 text-white disabled:opacity-50 dark:bg-white dark:text-black"
-          disabled={busy}
+      <button className="btn-sonder mt-2 w-full !py-3" disabled={busy}>
+        {busy ? "Signing in…" : "Sign in"}
+      </button>
+      <button
+        type="button"
+        className="btn-ghost w-full !py-3"
+        disabled={busy}
+        onClick={() => void submit("signUp")}
+      >
+        Create account
+      </button>
+      {message && (
+        <p
+          role="status"
+          className="rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-center text-sm text-zinc-300"
         >
-          Sign in
-        </button>
-        <button
-          type="button"
-          className="rounded border border-zinc-300 px-4 py-2 disabled:opacity-50 dark:border-zinc-700"
-          disabled={busy}
-          onClick={() => void submit("signUp")}
-        >
-          Create account
-        </button>
-      </div>
-      {message && <p className="text-sm text-zinc-600 dark:text-zinc-400">{message}</p>}
+          {message}
+        </p>
+      )}
     </form>
   );
 }

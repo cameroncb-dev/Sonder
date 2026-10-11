@@ -28,7 +28,8 @@ export type PlacingTool =
       entries: Array<{ assetId: string; checkpointId: string }>;
     };
 
-type Panel = "notes" | "text" | "sections" | "themes" | "directions" | "references";
+export type ToolPanel = "notes" | "text" | "sections" | "themes" | "directions" | "references";
+type Panel = ToolPanel;
 
 const THEME_DEFAULT = {
   primary: "#1E3A5F",
@@ -65,53 +66,44 @@ function loadSaved(): Saved {
   }
 }
 
-/** The 3×3 "waffle" button that shows and hides the toolbox. */
-export function WaffleButton({ open, onToggle }: { open: boolean; onToggle: () => void }) {
-  return (
-    <button
-      type="button"
-      onClick={onToggle}
-      aria-label={open ? "Hide tools" : "Show tools"}
-      aria-pressed={open}
-      title={open ? "Hide tools" : "Show tools"}
-      className={`grid h-8 w-8 grid-cols-3 place-items-center gap-0.5 rounded p-1.5 hover:bg-zinc-100 dark:hover:bg-zinc-800 ${
-        open ? "bg-zinc-100 dark:bg-zinc-800" : ""
-      }`}
-    >
-      {Array.from({ length: 9 }, (_, i) => (
-        <span key={i} className="h-1 w-1 rounded-full bg-zinc-600 dark:bg-zinc-300" />
-      ))}
-    </button>
-  );
-}
-
 function Section({
   id,
   title,
   open,
   onToggle,
   children,
+  only,
 }: {
   id: Panel;
   title: string;
   open: boolean;
   onToggle: (id: Panel) => void;
   children: React.ReactNode;
+  /** When the toolbox shows a single tool, only that one renders, always expanded. */
+  only?: Panel;
 }) {
+  if (only && only !== id) return null;
+  if (only)
+    return (
+      <section className="flex flex-col gap-3 px-4 pb-4">
+        <h2 className="pt-1 text-sm font-semibold text-white">{title}</h2>
+        {children}
+      </section>
+    );
   return (
-    <section className="border-b border-zinc-200 dark:border-zinc-800">
+    <section className="border-b border-white/[0.06]">
       <button
         type="button"
         aria-expanded={open}
         onClick={() => onToggle(id)}
-        className="flex w-full items-center justify-between px-3 py-2.5 text-left text-sm font-medium hover:bg-zinc-50 dark:hover:bg-zinc-900"
+        className="flex w-full items-center justify-between px-4 py-2.5 text-left text-sm font-medium text-zinc-100 hover:bg-white/[0.04]"
       >
         {title}
         <span className={`text-xs text-zinc-400 transition-transform ${open ? "rotate-180" : ""}`}>
           ▾
         </span>
       </button>
-      {open && <div className="flex flex-col gap-3 px-3 pb-3">{children}</div>}
+      {open && <div className="flex flex-col gap-3 px-4 pb-4">{children}</div>}
     </section>
   );
 }
@@ -120,8 +112,7 @@ const Label = ({ children }: { children: React.ReactNode }) => (
   <span className="text-[11px] font-medium uppercase tracking-wide text-zinc-500">{children}</span>
 );
 
-const placeButton =
-  "rounded bg-zinc-900 px-3 py-1.5 text-sm text-white hover:bg-zinc-700 disabled:opacity-40 dark:bg-white dark:text-black dark:hover:bg-zinc-200";
+const placeButton = "btn-sonder !py-2";
 
 /**
  * Left-hand tools: choose a card's style first, then click the canvas to place it.
@@ -133,7 +124,12 @@ export function Toolbox({
   onCancel,
   onAddReference,
   onChooseDirection,
+  only,
+  onClose,
 }: {
+  /** Show just this tool (opened from the rail) instead of every section. */
+  only?: Panel;
+  onClose: () => void;
   placing: PlacingTool | null;
   onPlace: (tool: PlacingTool) => void;
   onCancel: () => void;
@@ -166,9 +162,25 @@ export function Toolbox({
   const isOpen = (id: Panel) => saved.open.includes(id);
 
   return (
-    <aside className="flex w-64 shrink-0 flex-col overflow-y-auto border-r border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-950">
+    <aside
+      aria-label={only ? `${only} tool` : "Tools"}
+      className="flex max-h-full w-64 shrink-0 flex-col overflow-y-auto rounded-2xl border border-white/[0.07] bg-zinc-900/95 shadow-[0_20px_50px_-20px_rgba(0,0,0,0.8)] backdrop-blur-xl"
+    >
+      <div className="flex items-center justify-between px-4 pb-1 pt-3">
+        <span className="text-[11px] font-medium uppercase tracking-wide text-zinc-500">
+          {only ? "Tool" : "All tools"}
+        </span>
+        <button
+          type="button"
+          aria-label="Close tools"
+          className="grid h-6 w-6 place-items-center rounded-md text-zinc-400 hover:bg-white/[0.07] hover:text-white"
+          onClick={onClose}
+        >
+          ✕
+        </button>
+      </div>
       {placing && (
-        <div className="flex items-center justify-between gap-2 bg-blue-50 px-3 py-2 text-xs text-blue-900 dark:bg-blue-950 dark:text-blue-100">
+        <div className="mx-3 mb-2 flex items-center justify-between gap-2 rounded-xl bg-electric/15 px-3 py-2 text-xs text-blue-100">
           <span>Click the canvas to place · Esc to cancel</span>
           <button type="button" className="underline" onClick={onCancel}>
             Cancel
@@ -176,7 +188,7 @@ export function Toolbox({
         </div>
       )}
 
-      <Section id="notes" title="Notes" open={isOpen("notes")} onToggle={toggle}>
+      <Section id="notes" title="Notes" open={isOpen("notes")} onToggle={toggle} only={only}>
         <Label>Shape</Label>
         <ShapePicker
           value={saved.note.shape}
@@ -201,7 +213,7 @@ export function Toolbox({
         </button>
       </Section>
 
-      <Section id="text" title="Text" open={isOpen("text")} onToggle={toggle}>
+      <Section id="text" title="Text" open={isOpen("text")} onToggle={toggle} only={only}>
         <Label>Size</Label>
         <SizePicker
           value={saved.text.size}
@@ -226,7 +238,13 @@ export function Toolbox({
         </button>
       </Section>
 
-      <Section id="sections" title="Sections" open={isOpen("sections")} onToggle={toggle}>
+      <Section
+        id="sections"
+        title="Sections"
+        open={isOpen("sections")}
+        onToggle={toggle}
+        only={only}
+      >
         <p className="text-xs text-zinc-500">
           A labelled area for grouping cards. Cards inside move with it; drag its corners to resize.
         </p>
@@ -241,14 +259,14 @@ export function Toolbox({
         </button>
       </Section>
 
-      <Section id="themes" title="Themes" open={isOpen("themes")} onToggle={toggle}>
+      <Section id="themes" title="Themes" open={isOpen("themes")} onToggle={toggle} only={only}>
         <p className="text-xs text-zinc-500">
           Four named colors you can apply to several documents at once. Place the theme, then click
           it to map layers and apply.
         </p>
         <Label>Name</Label>
         <input
-          className="rounded border border-zinc-300 bg-white px-2 py-1 text-sm dark:border-zinc-600 dark:bg-zinc-900"
+          className="field !rounded-lg !px-2.5 !py-1.5 !text-sm"
           placeholder="e.g. Broadway"
           value={saved.theme.name}
           onChange={(e) => update({ theme: { ...saved.theme, name: e.target.value } })}
@@ -289,21 +307,27 @@ export function Toolbox({
         </button>
       </Section>
 
-      <Section id="directions" title="Directions" open={isOpen("directions")} onToggle={toggle}>
+      <Section
+        id="directions"
+        title="Directions"
+        open={isOpen("directions")}
+        onToggle={toggle}
+        only={only}
+      >
         <p className="text-xs text-zinc-500">
           Save a named look: the exact version of each document, kept as it is even as you keep
           working. It appears as a card in the middle of your view; click it to reopen the versions.
         </p>
         <Label>Name</Label>
         <input
-          className="rounded border border-zinc-300 bg-white px-2 py-1 text-sm dark:border-zinc-600 dark:bg-zinc-900"
+          className="field !rounded-lg !px-2.5 !py-1.5 !text-sm"
           placeholder="e.g. Bold launch"
           value={direction.name}
           onChange={(e) => setDirection((d) => ({ ...d, name: e.target.value }))}
         />
         <Label>Description (optional)</Label>
         <textarea
-          className="h-16 resize-none rounded border border-zinc-300 bg-white px-2 py-1 text-sm dark:border-zinc-600 dark:bg-zinc-900"
+          className="field h-16 resize-none !rounded-lg !px-2.5 !py-1.5 !text-sm"
           value={direction.description}
           onChange={(e) => setDirection((d) => ({ ...d, description: e.target.value }))}
         />
@@ -323,7 +347,13 @@ export function Toolbox({
         </button>
       </Section>
 
-      <Section id="references" title="References" open={isOpen("references")} onToggle={toggle}>
+      <Section
+        id="references"
+        title="References"
+        open={isOpen("references")}
+        onToggle={toggle}
+        only={only}
+      >
         <p className="text-xs text-zinc-500">
           Upload an inspiration image (PNG, JPEG or WebP). It lands in the middle of your view.
         </p>

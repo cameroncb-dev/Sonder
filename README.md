@@ -55,8 +55,9 @@ troubleshooting.
 ### 5. Connect Photoshop
 
 1. In the Sonder panel, click **Connect**. It shows a code such as `ABCD-2345`.
-2. Open <http://localhost:3000/pair>, enter the code, and click **Approve**. The panel changes
-   to "Connected as …". The connection lasts 12 hours.
+2. Open <http://localhost:3000/pair> (the **Connect** guide, opened at the code step), enter the
+   code, and click **Approve**. The panel changes to "Connected as …". The connection is
+   remembered for 30 days of use, so you normally pair once.
 
 ### 6. Link a document
 
@@ -86,10 +87,39 @@ Click the document card to open the inspector:
 
 On the canvas:
 
-- **Add note** and **Add reference** (PNG, JPEG or WebP) place new cards.
+- Use the tool rail on the left to place notes, text, sections, themes and directions, or to
+  add a reference image (PNG, JPEG or WebP).
 - Drag cards to arrange them. Positions are saved.
 - Drag from one card's edge dot to another to connect them. Connections are for organizing
   only and never change version history.
 - Select a note, reference or connection and press Delete to remove it.
 
 Captures and branch switches run only while the Sonder panel is open and connected.
+
+### 8. Seed a demo project
+
+With Photoshop open and the panel connected, this builds a ready-made project (as the
+connected user) for showing branches:
+
+```sh
+pnpm --filter web seed:branching-demo -- "Branching Demo"
+```
+
+It creates "Spring Poster" with `main` (three versions), `warm-launch` and `night-edition`
+(both from the second version), and `warm-serif` (a branch of `warm-launch`), plus notes on
+the canvas suggesting what to try. It takes about two minutes and leaves `main` open in
+Photoshop.
+
+For a project that covers every version feature (capture, compare, restore, switch, combine,
+themes and directions):
+
+```sh
+pnpm --filter web seed:feature-demo -- "Sonder Demo"
+```
+
+It creates "Spring Poster" (the branches above, plus a fourth `main` version with a lime
+background to restore from) and "Spring Flyer" (two versions). It also adds the themes
+"Sunset" and "Midnight", already mapped to both documents' headline, body and background, and
+the directions "Client shortlist" and "Night launch". Numbered notes on the canvas walk
+through the demo. It takes about three minutes and leaves both documents open in Photoshop on
+`main`.
