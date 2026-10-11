@@ -29,6 +29,27 @@ export const POST = handler(async (request: Request) => {
   const existing = await find();
   if (existing) return Response.json({ asset: existing });
 
+  // An older file of a tracked document (its original, or a previous branch working copy).
+  const former = unwrap(
+    await admin
+      .from("assets")
+      .select("id,name,native_locator")
+      .eq("project_id", body.projectId)
+      .eq("application", session.application)
+      .contains("known_paths", [body.path])
+      .limit(1)
+      .maybeSingle(),
+  ) as { id: string; name: string; native_locator: { path?: string } } | null;
+  if (former)
+    throw new HttpError(
+      409,
+      "ALREADY_TRACKED",
+      `This file is an earlier version of "${former.name}", which Sonder now tracks as ${
+        former.native_locator.path?.split("/").pop() ?? "another file"
+      }. Edit that file instead, or switch branches from the canvas.`,
+      { assetId: former.id, currentPath: former.native_locator.path ?? null },
+    );
+
   const { data: asset, error } = await admin
     .from("assets")
     .insert({

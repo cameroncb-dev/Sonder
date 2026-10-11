@@ -77,6 +77,7 @@ export const POST = handler(
         p_params: {
           branchId: branch.id,
           branchName: branch.name,
+          assetName: asset.name,
           checkpointId: target.id,
           native: target.manifest.files.native,
           // Lets the connector detect work that was never captured before it closes the document.

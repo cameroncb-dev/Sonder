@@ -106,6 +106,22 @@ New end-to-end checks:
   popup does. Owners and editors can delete. Covered by an integration test (cascade) and an
   E2E check (confirmation required).
 
+- **Which file is Sonder tracking?** (Found in testing: an edit went into the original file
+  while Sonder captured the branch working copy, so the "font" capture was identical to its
+  parent. The original file had also been linked again as a duplicate document.)
+  - Migration `20261014000100_asset_known_paths.sql`: `assets.known_paths` remembers every
+    file a document has used, both the original and each working copy.
+  - Working copies open as **"<document> - <branch>.psd"** (one folder per switch).
+  - The panel shows "✓ Sonder tracks this file: <document> · branch <name>". On an earlier
+    file it warns that edits won't be captured, names the tracked file, offers "Show the
+    tracked file", and hides Link.
+  - Linking an earlier file returns 409 `ALREADY_TRACKED` instead of creating a duplicate.
+  - History marks captures whose text and colors equal the previous version: "No text or
+    color changes".
+  - The inspector explains Capture, Branches, Combine and History in one line each.
+  - E2E: 5 new checks (working copy name, original recognised and not linkable, no-change flag
+    on and off, delete confirmation). Integration: 35/35.
+
 ### Known limitations
 
 - Only properties are combined. Added or removed layers, pixels and mixed-format text are
@@ -120,8 +136,8 @@ New end-to-end checks:
   them).
 - After approval the open working copy is behind its branch until "Open result". The card
   doesn't show "behind" yet.
-- From Phase 4: the original file isn't recognised after switching branches (decision
-  pending).
+- Files used before `known_paths` existed were backfilled from switch history. The user's
+  original `Downloads/Sonder-Test.psd` was added by hand.
 
 ### Recommended next phase
 

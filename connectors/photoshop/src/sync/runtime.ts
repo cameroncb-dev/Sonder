@@ -4,6 +4,7 @@ import {
   CheckpointManifest,
   type ConnectorJob,
   type Element,
+  type HeartbeatResponse,
   type PairStartResponse,
 } from "@sonder/contracts";
 import { action, app, constants, core } from "photoshop";
@@ -50,7 +51,9 @@ export type ConnectionState =
 
 export interface RuntimeStatus {
   connection: ConnectionState;
-  assets: Array<{ assetId: string; projectId: string; path: string }>;
+  assets: HeartbeatResponse["assets"];
+  /** Open files that a tracked document used before; edits there aren't captured. */
+  former?: NonNullable<HeartbeatResponse["formerDocuments"]>;
   lastJob?: {
     id: string;
     operation: string;
@@ -157,7 +160,7 @@ export class ConnectorRuntime {
     this.session = undefined;
     this.pairing = undefined;
     await save("session.json", null);
-    this.update({ connection: { state: "unpaired" }, assets: [] });
+    this.update({ connection: { state: "unpaired" }, assets: [], former: [] });
   }
 
   private async setBaseline(path: string, checkpointId: string) {
@@ -183,6 +186,23 @@ export class ConnectorRuntime {
 
   api(): SonderApi | undefined {
     return this.session ? new SonderApi(this.session.token) : undefined;
+  }
+
+  /**
+   * Brings the file Sonder tracks for a document to the front. Returns false when it isn't
+   * open (then the user switches branches from the canvas, which opens it).
+   */
+  async showTrackedCopy(path: string): Promise<boolean> {
+    const doc = openDocuments().find((d) => d.path === path);
+    const target = doc && findDocument(doc.id);
+    if (!target) return false;
+    await core.executeAsModal(
+      async () => {
+        app.activeDocument = target;
+      },
+      { commandName: "Sonder: show tracked copy" },
+    );
+    return true;
   }
 
   /** Development fault injection, used to verify recovery from interrupted jobs. */
@@ -255,7 +275,11 @@ export class ConnectorRuntime {
       }),
     );
     this.heads = new Map(heartbeat.assets.map((a) => [a.path, a.headCheckpointId ?? null]));
-    this.update({ assets: heartbeat.assets, error: undefined });
+    this.update({
+      assets: heartbeat.assets,
+      former: heartbeat.formerDocuments ?? [],
+      error: undefined,
+    });
     const { job } = await api.claim();
     if (job) {
       await this.execute(api, job);
@@ -380,6 +404,7 @@ export class ConnectorRuntime {
     const params = job.params as {
       branchId: string;
       branchName: string;
+      assetName?: string;
       checkpointId: string;
       native: { name: string; bytes: number; digest: string };
       currentHeadElements: Element[] | null;
@@ -422,12 +447,26 @@ export class ConnectorRuntime {
         message: "Downloaded snapshot does not match its manifest",
       });
     }
+    // One folder per switch keeps paths unique, so the file name can stay readable in
+    // Photoshop's tab: "Sonder-Test - font.psd".
     const working = await getOrCreateFolder(
-      await getOrCreateFolder(await connectorFolder(), "working"),
-      job.assetId ?? "unknown",
+      await getOrCreateFolder(
+        await getOrCreateFolder(await connectorFolder(), "working"),
+        job.assetId ?? "unknown",
+      ),
+      String(Date.now()),
     );
-    const safeName = params.branchName.replace(/[^\w.-]+/g, "_").slice(0, 60) || "branch";
-    const file = await writeBytes(working, `${safeName}-${Date.now()}.psd`, bytes);
+    const clean = (text: string) =>
+      text
+        .replace(/[\\/:*?"<>|]+/g, "_")
+        .trim()
+        .slice(0, 60);
+    const base = clean((params.assetName ?? "Document").replace(/\.psd$/i, "")) || "Document";
+    const file = await writeBytes(
+      working,
+      `${base} - ${clean(params.branchName) || "branch"}.psd`,
+      bytes,
+    );
 
     const opened = await core.executeAsModal(
       async () => {

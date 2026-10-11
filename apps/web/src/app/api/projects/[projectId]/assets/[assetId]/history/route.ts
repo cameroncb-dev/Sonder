@@ -1,4 +1,8 @@
+import { diffElements, nativeIdentity } from "@sonder/connector-sdk";
+import type { Element } from "@sonder/contracts";
+
 import { requireProjectRole, requireUser } from "@/server/auth";
+import { connectorCapabilities } from "@/server/combine";
 import { handler, unwrap } from "@/server/http";
 import { requireAsset } from "@/server/projects";
 
@@ -10,7 +14,7 @@ interface CheckpointRow {
   preview_path: string;
   native_bytes: number;
   proposal_item_id: string | null;
-  manifest: { elements?: unknown[]; document?: unknown; applicationVersion?: string };
+  manifest: { elements?: Element[]; document?: unknown; applicationVersion?: string };
 }
 
 /** Finalized checkpoints with parent links, branches and pending jobs for one asset. */
@@ -87,6 +91,20 @@ export const GET = handler(
       : { data: [] };
     const urls = new Map((signed ?? []).map((s) => [s.path, s.signedUrl]));
 
+    // Flags captures whose supported properties equal their parent's, e.g. when the edit went
+    // into a different file than the one Sonder captured.
+    const identityFields = await connectorCapabilities(asset.application, projectId).then(
+      (c) => c.identityFields,
+      () => undefined,
+    );
+    const key = (e: Element) => nativeIdentity(e.native, identityFields);
+    const elementsById = new Map(checkpoints.map((c) => [c.id, c.manifest.elements ?? []]));
+    const unchanged = (c: CheckpointRow) => {
+      const parent = parents.find((p) => p.checkpoint_id === c.id)?.parent_id;
+      const before = parent ? elementsById.get(parent) : undefined;
+      return before ? diffElements(before, c.manifest.elements ?? [], key).length === 0 : false;
+    };
+
     return Response.json({
       role,
       asset: {
@@ -105,6 +123,7 @@ export const GET = handler(
         parents: parents.filter((p) => p.checkpoint_id === c.id).map((p) => p.parent_id),
         previewUrl: urls.get(c.preview_path) ?? null,
         nativeBytes: c.native_bytes,
+        noPropertyChanges: unchanged(c),
         document: c.manifest.document ?? null,
         elements: c.manifest.elements ?? [],
       })),

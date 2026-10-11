@@ -65,6 +65,8 @@ export interface HistoryCheckpoint {
   parents: string[];
   previewUrl: string | null;
   nativeBytes: number;
+  /** True when text and colors equal the parent checkpoint's. */
+  noPropertyChanges?: boolean;
   document: { name: string; width: number; height: number; colorMode: string } | null;
   elements: Element[];
 }

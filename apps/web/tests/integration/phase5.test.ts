@@ -278,6 +278,30 @@ describe("combination proposals", () => {
   });
 });
 
+describe("known file paths", () => {
+  it("remembers every path a document has used", async () => {
+    const { data: created } = await editor.client
+      .from("assets")
+      .insert({
+        project_id: projectId,
+        application: "photoshop",
+        name: "Flyer",
+        native_locator: { path: "/tmp/p5/flyer.psd" },
+      })
+      .select("id,known_paths")
+      .single();
+    expect(created!.known_paths).toEqual(["/tmp/p5/flyer.psd"]);
+    for (const path of ["/tmp/p5/working/1/Flyer - alt.psd", "/tmp/p5/flyer.psd"])
+      await admin.from("assets").update({ native_locator: { path } }).eq("id", created!.id);
+    const { data } = await admin
+      .from("assets")
+      .select("known_paths")
+      .eq("id", created!.id)
+      .single();
+    expect(data!.known_paths).toEqual(["/tmp/p5/flyer.psd", "/tmp/p5/working/1/Flyer - alt.psd"]);
+  });
+});
+
 describe("deleting a document with history", () => {
   it("removes branches, checkpoints, proposals and candidates in one delete", async () => {
     const { error } = await editor.client.from("assets").delete().eq("id", assetId);

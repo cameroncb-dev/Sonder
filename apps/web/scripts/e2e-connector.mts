@@ -404,6 +404,35 @@ async function main() {
     await waitFor("heartbeat maps the working copy", async () =>
       (await pluginStatus()).assets.some((a: { path: string }) => a.path === forced.result?.path),
     );
+    check(
+      "the working copy is named after the document and branch",
+      typeof forced.result?.path === "string" && forced.result.path.endsWith("/fixture - alt.psd"),
+      forced.result?.path,
+    );
+
+    // Reopening the original file (as a user might) must not look like a new document.
+    const fixtureFolder = (doc.path as string).split("/").slice(-2, -1)[0];
+    await trigger("reopen-fixture", { folder: fixtureFolder });
+    const formerSeen = await waitFor("panel recognises the original file", async () =>
+      (await pluginStatus()).former?.find(
+        (f: { path: string; currentPath: string }) =>
+          f.path === doc.path && f.currentPath === forced.result?.path,
+      ),
+    ).catch(() => undefined);
+    const relink = await trigger("link", { projectId }).then(
+      () => "linked",
+      (e: Error) => e.message,
+    );
+    const { count: assetCount } = await admin
+      .from("assets")
+      .select("id", { count: "exact", head: true })
+      .eq("project_id", projectId);
+    check(
+      "the original file is recognised as an earlier file and can't be linked again",
+      !!formerSeen && relink.includes("earlier version") && assetCount === 1,
+      relink,
+    );
+    await trigger("close-docs", { match: `${fixtureFolder}/fixture.psd` });
 
     const op3 = `e2e-${randomUUID()}`;
     const job3 = await owner.api("POST", `/api/projects/${projectId}/assets/${asset.id}/capture`, {
@@ -433,6 +462,10 @@ async function main() {
       sources?.length === 2 &&
         sources.every((s) => s.status === "finalized") &&
         sources.find((s) => s.id === cp1.id)?.native_digest === cpRow!.manifest.files.native.digest,
+    );
+    check(
+      "history flags a capture with no text or color changes",
+      h3.checkpoints.find((c: { id: string }) => c.id === pending?.id)?.noPropertyChanges === true,
     );
     check(
       "history shows three checkpoints with previews",
@@ -590,6 +623,12 @@ async function main() {
     await setProperty("Headline", { type: "text.color", value: "#00FF00" });
     await trigger("save-active");
     const fontHead = await captureNow("New headline font, green headline");
+    const fontHistory = (await owner.api("GET", historyUrl)).body;
+    check(
+      "history does not flag a capture that changed text or colors",
+      fontHistory.checkpoints.find((c: { id: string }) => c.id === fontHead)?.noPropertyChanges ===
+        false,
+    );
     check(
       "both branches captured their edits",
       toAlt.status === "succeeded" && !!bgHead && !!fontHead,

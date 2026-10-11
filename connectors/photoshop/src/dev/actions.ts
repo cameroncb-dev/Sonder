@@ -36,6 +36,16 @@ export function devActions(
       });
       return { path: documentPath(doc), name: doc.name };
     },
+    /** Reopens a fixture created by open-fixture, given its folder name (e.g. after a switch). */
+    "reopen-fixture": async (command: TriggerCommand, root: Folder) => {
+      if (typeof command.folder !== "string" || !/^docs-[\w-]+$/.test(command.folder))
+        throw new Error("folder required");
+      const file = await getFile(await getOrCreateFolder(root, command.folder), "fixture.psd");
+      const doc = await core.executeAsModal(() => app.open(file as unknown as File), {
+        commandName: "Sonder: reopen e2e document",
+      });
+      return { path: documentPath(doc), name: doc.name };
+    },
     /** Closes open documents whose path contains `match`, without saving. */
     "close-docs": async (command: TriggerCommand) => {
       if (typeof command.match !== "string" || command.match.length < 8)

@@ -62,8 +62,26 @@ export const HeartbeatResponse = z.object({
       path: z.string(),
       /** Head of the asset's active branch, for comparing the open document; null before any capture. */
       headCheckpointId: z.uuid().nullable().optional(),
+      assetName: z.string().optional(),
+      branchName: z.string().nullable().optional(),
     }),
   ),
+  /**
+   * Open files that a tracked document used before (its original or an older working copy).
+   * Edits there aren't captured; the connector should point the user at `currentPath`.
+   */
+  formerDocuments: z
+    .array(
+      z.object({
+        path: z.string(),
+        assetId: z.uuid(),
+        projectId: z.uuid(),
+        assetName: z.string(),
+        currentPath: z.string().nullable(),
+        branchName: z.string().nullable(),
+      }),
+    )
+    .optional(),
 });
 export type HeartbeatResponse = z.infer<typeof HeartbeatResponse>;
 

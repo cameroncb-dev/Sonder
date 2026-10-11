@@ -21,6 +21,16 @@
       .row {
         margin: 4px 0;
       }
+      .tracked {
+        color: #7fd18b;
+      }
+      .warning {
+        margin: 6px 0;
+        padding: 6px 8px;
+        border-radius: 4px;
+        background: rgba(255, 176, 32, 0.15);
+        color: #ffcf70;
+      }
       .label {
         color: var(--uxp-host-text-color-secondary);
       }
@@ -41,6 +51,11 @@
     <h2>Sonder</h2>
     <div class="row"><span class="label">Photoshop:</span> <span id="host">—</span></div>
     <div class="row"><span class="label">Active document:</span> <span id="doc">—</span></div>
+    <div class="row tracked" id="tracking" hidden></div>
+    <div class="warning" id="former" hidden>
+      <div id="former-text"></div>
+      <sp-button id="show-tracked" variant="secondary">Show the tracked file</sp-button>
+    </div>
     <div class="row"><span class="label">Backend:</span> <span id="backend">not checked</span></div>
     <h3>Connection</h3>
     <div class="row" id="connection">Not connected</div>
@@ -52,7 +67,7 @@
         <select id="project"></select>
         <sp-button id="reload-projects" variant="secondary">Reload</sp-button>
       </div>
-      <div class="actions">
+      <div class="actions" id="link-actions">
         <sp-button id="link" variant="secondary">Link active document</sp-button>
       </div>
     </div>
