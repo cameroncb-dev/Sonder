@@ -100,6 +100,10 @@ New end-to-end checks:
 
 - Only properties are combined. Added or removed layers, pixels and mixed-format text are
   preserved from the target but never merged.
+  **Decision (2026-10-11): keep property-level combining for now.** A possible later
+  improvement is whole-layer combining: treat any layer, pixel layers included, as a unit;
+  take source-only changes and additions; resolve layers changed on both sides as conflicts.
+  This needs a spike on Photoshop's pixel-reading and cross-document layer copy APIs first.
 - A proposal combines two branches of **one** asset. Coordinated updates across assets are
   Phase 6.
 - Each change of choices creates a new proposal and candidate; old ones remain listed (discard
