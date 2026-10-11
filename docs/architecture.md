@@ -50,6 +50,21 @@ flowchart LR
 - **Jobs:** the job lifecycle runs in Postgres functions called by the backend. The connector
   token is checked in Next.js, and the functions re-check the session and membership.
 
+## Branches and checkout (Phase 4)
+
+- A branch is a named pointer to a finalized checkpoint of its own asset. Each asset has one
+  active branch.
+- A capture records the active branch head as its parent. On finalize, the head advances only
+  if it still points at that parent (compare-and-swap), so concurrent captures never overwrite
+  each other. An asset's first capture creates `main`.
+- Changing the active branch is a connector job (`openCheckpoint`):
+  - The connector downloads the branch head snapshot and verifies its digest.
+  - It refuses if the open document has unsaved or uncaptured changes.
+  - Otherwise it opens a Sonder-managed working copy and reports its path.
+  - A database trigger then switches the active branch and repoints the asset.
+  - Original files are never overwritten.
+- Canvas items and connections are presentation only, stored apart from `checkpoint_parents`.
+
 ## Storage
 
 The private buckets are `snapshots` (native documents), `previews` (PNG, JPEG, WebP) and

@@ -142,6 +142,23 @@ export class SonderApi {
     });
   }
 
+  /** Native snapshot bytes of a finalized checkpoint. */
+  async downloadCheckpoint(checkpointId: string): Promise<Uint8Array> {
+    const response = await fetch(
+      `${BACKEND_URL}/api/connector/checkpoints/${checkpointId}/download`,
+      {
+        headers: { authorization: `Bearer ${this.token}` },
+      },
+    );
+    if (!response.ok)
+      throw new ApiError(
+        response.status,
+        "DOWNLOAD_FAILED",
+        `Snapshot download failed (HTTP ${response.status})`,
+      );
+    return new Uint8Array(await response.arrayBuffer());
+  }
+
   finalize(checkpointId: string) {
     return request<{ checkpointId: string; status: string }>(
       `/api/connector/checkpoints/${checkpointId}/finalize`,

@@ -152,6 +152,15 @@ connector token. It never receives Supabase keys or the vision token. Schemas li
 - for jobs with `requires_asset_session`, the session reported the asset's document as open
   within the last 2 minutes.
 
+**Checkout (`openCheckpoint`):**
+
+- Params: `branchId`, `branchName`, `checkpointId`, `native` (name, bytes, digest),
+  `currentHeadElements`, and `force`.
+- The connector must refuse with `UNSAVED_CHANGES` when the open document has unsaved changes.
+- It must refuse with `UNCAPTURED_CHANGES` when the document's supported properties differ
+  from the active head's manifest, unless `force` is set.
+- On success, it reports `{ path }` for the opened working copy.
+
 **Delivery guarantees:**
 
 - Operation ids are unique, so resubmitting returns the existing job.

@@ -143,6 +143,18 @@ file at the end.
 4. Save your document, choose a project in the panel, and click **Link active document**.
 5. Jobs for linked documents run while the panel is open.
 
+### Using the canvas
+
+1. Open `http://localhost:3000/projects`, create a project, and open it.
+2. Link a saved document from the Photoshop panel. Its card appears on the canvas.
+3. Click the card to open the inspector:
+   - **Capture** saves a checkpoint onto the active branch.
+   - **Branch from here** on any checkpoint creates a branch.
+   - **Switch** opens a branch head in Photoshop as a working copy.
+   - Tick two checkpoints and click **Compare**.
+4. **Add note** and **Add reference** place cards. Drag cards to arrange them, and drag
+   between card handles to connect them. Connections never change version history.
+
 End-to-end check (dev server running, panel open with Load & Watch):
 
 ```sh

@@ -1,5 +1,99 @@
 # Progress
 
+## Phase 4 — Canvas and Branching
+
+Status: **complete**, with one gap: the canvas UI has been build-checked and smoke-tested, but
+not yet used interactively in a browser (see Known limitations). All acceptance criteria are
+verified end to end against the hosted project with the real plugin. Branch: `phase-4-canvas`.
+
+### Completed
+
+| Task                               | Result                                                                                                                                    |
+| ---------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| Project dashboard                  | `/projects`: list and create projects                                                                                                     |
+| Asset cards, references, notes     | `/projects/[id]`: React Flow canvas. Asset cards are placed automatically; notes are editable; reference images upload to private storage |
+| Persist canvas positions           | Saved on drag stop; reloads restore them                                                                                                  |
+| Checkpoint inspector               | Side panel per asset: capture, branches, history graph, checkpoint details (preview, document info, element properties)                   |
+| Create branches from checkpoints   | "Branch from here" on any checkpoint; the source is never modified                                                                        |
+| Display history relationships      | Commit-graph lanes drawn from `checkpoint_parents` only                                                                                   |
+| Active branch and connector status | Card and inspector show the active branch, connector online/offline, and actions from the connector's capability manifest                 |
+| Side-by-side comparison            | Pick two checkpoints, then previews side by side plus a property table with differences highlighted                                       |
+| Optimistic concurrency             | Saves carry a `version`. A stale save gets 409 with the current item; the database trigger also rejects skipped versions                  |
+
+**Branching model:**
+
+- Captures attach to the asset's active branch: the parent is the branch head, and the head
+  advances by compare-and-swap.
+- The first capture creates and activates `main`.
+- Switching branches is an `openCheckpoint` job. The plugin opens the branch head as a
+  Sonder-managed working copy, and the asset follows that copy. It refuses with
+  `UNSAVED_CHANGES` or `UNCAPTURED_CHANGES`, unless forced. The original file is never
+  overwritten.
+
+### Files and migrations
+
+- Migration `20261012000000_branching.sql`: `assets.active_branch_id` (composite foreign key to
+  the asset's own branches), branch-aware `begin_checkpoint` and `finalize_checkpoint`, the
+  `apply_checkout` trigger, and the canvas version trigger.
+- API: `canvas`, `canvas/items[/:id]`, `canvas/connections[/:id]`,
+  `assets/:id/{history,branches,capture,checkout}`, and `connector/checkpoints/:id/download`.
+- UI: `src/app/projects/**`, `src/components/canvas/*` (nodes, inspector, history graph,
+  compare view, canvas), and `src/lib/api-client.ts`.
+- Plugin: the `openCheckpoint` (checkout) operation, snapshot download, and dev actions
+  `edit-text` and `save-active`.
+- Contracts: new issue codes `UNSAVED_CHANGES` and `UNCAPTURED_CHANGES`.
+
+### Verification performed (actual results)
+
+| Check                                                                   | Result                                                                                                                                                                              |
+| ----------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `pnpm typecheck`, `lint`, `test`, `format:check`, web `build`           | Pass                                                                                                                                                                                |
+| `test:integration` (local)                                              | 24/24 (8 new: main creation, parent links, branching keeps sources, compare-and-swap, checkout switching, cross-asset rejection, canvas version conflicts, connections vs ancestry) |
+| `e2e:connector` (hosted + Photoshop 27.8.0)                             | **40/40** (16 new, listed below)                                                                                                                                                    |
+| Page smoke test (`/`, `/projects`, `/projects/[id]`, `/login`, `/pair`) | 200 on each                                                                                                                                                                         |
+
+New end-to-end checks:
+
+- The first capture created and activated `main`, and the second advanced it (its parent is
+  the first). A branch `alt` was created from the first checkpoint.
+- Checkout refused an unsaved document (`UNSAVED_CHANGES`) and then a saved but uncaptured one
+  (`UNCAPTURED_CHANGES`). `main` stayed active.
+- A forced checkout opened `alt` as a working copy, the asset path followed it, and the
+  heartbeat mapped it.
+- A capture on `alt` descends from the first checkpoint. `main`'s head is unchanged, and both
+  source checkpoints are intact (the digest matches the original).
+- History shows three checkpoints with previews.
+- The canvas auto-placed the asset card and shows application, active branch (`alt`), online
+  status and all eight connector operations.
+- A stale save got 409 with the current position, and the layout persisted after reload.
+- Connecting and moving cards left `checkpoint_parents` unchanged.
+- A reviewer can read history but gets 403 for moving cards and for capture.
+
+### Problems found and fixed during verification
+
+- **Canvas conflict error code:** it originally used `40001`, which PostgREST retries forever.
+  Switched to `23514`.
+- **Variable name clash:** in `finalize_checkpoint`, the local `result` collided with
+  `jobs.result`.
+- **Build:** `useParams()` needed a `<Suspense>` boundary under Cache Components.
+- **React lint rules:** state was being set synchronously inside effects. Restructured to
+  effects keyed on reload counters, with cancellation.
+
+### Known limitations
+
+- The canvas UI has not been exercised interactively in a browser by the developer. Data and
+  behavior are verified through the same API routes the UI calls.
+- Working copies live in the plugin's data folder (`…/PluginData/connector/working/`), not next
+  to the original PSD.
+- History is a flat list per asset with lanes. Merges (multiple parents) are drawn but can't be
+  created until Phase 5.
+- Live multiplayer editing is deferred. Concurrent edits are handled by version conflicts only.
+- Reference images are not yet analyzed (Phase 7).
+
+### Recommended next phase
+
+Phase 5 (selective combination and approval).
+
 ## Phase 3 — Persistence, Permissions, and Jobs
 
 Status: **complete.** All acceptance criteria are verified against the hosted Supabase project
