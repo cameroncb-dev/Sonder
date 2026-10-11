@@ -1,0 +1,66 @@
+import { app, core } from "photoshop";
+
+import { getFile, getOrCreateFolder, type Folder } from "../ps/files";
+import type { ConnectorRuntime } from "../sync/runtime";
+import { documentPath } from "../sync/runtime";
+import { createFixture, pickFonts } from "./fixture";
+import type { TriggerCommand, TriggerHandlers } from "./trigger";
+
+/** Development actions for driving end-to-end checks from a terminal. */
+export function devActions(
+  runtime: ConnectorRuntime,
+  runSuite: (runId: string, root: Folder) => Promise<unknown>,
+): TriggerHandlers {
+  return {
+    suite: (command, root) => runSuite(command.runId, root),
+    pair: async () => {
+      await runtime.pair();
+      return runtime.status.connection;
+    },
+    disconnect: async () => {
+      await runtime.disconnect();
+      return runtime.status.connection;
+    },
+    /** Creates a saved fixture PSD in a fresh folder and leaves it open, returning its path. */
+    "open-fixture": async (command: TriggerCommand, root: Folder) => {
+      // A new folder per run: overwriting a PSD that is still open in Photoshop blocks on a dialog.
+      const folder = await getOrCreateFolder(root, `docs-${command.runId}`);
+      await createFixture(folder, pickFonts()[0]);
+      const file = await getFile(folder, "fixture.psd");
+      const doc = await core.executeAsModal(() => app.open(file as unknown as File), {
+        commandName: "Sonder: open e2e document",
+      });
+      return { path: documentPath(doc), name: doc.name };
+    },
+    /** Closes open documents whose path contains `match`, without saving. */
+    "close-docs": async (command: TriggerCommand) => {
+      if (typeof command.match !== "string" || command.match.length < 8)
+        throw new Error("match required");
+      const closed: string[] = [];
+      await core.executeAsModal(
+        async () => {
+          for (let i = app.documents.length - 1; i >= 0; i--) {
+            const doc = app.documents[i];
+            const path = doc && documentPath(doc);
+            if (doc && path?.includes(command.match as string)) {
+              closed.push(path);
+              doc.closeWithoutSaving();
+            }
+          }
+        },
+        { commandName: "Sonder: close e2e documents" },
+      );
+      return { closed };
+    },
+    link: async (command: TriggerCommand) => {
+      if (typeof command.projectId !== "string") throw new Error("projectId required");
+      return runtime.linkActiveDocument(command.projectId);
+    },
+    fault: async (command: TriggerCommand) => {
+      if (command.stage !== "before-finalize") throw new Error("Unknown fault stage");
+      runtime.injectFault("before-finalize");
+      return { armed: command.stage };
+    },
+    status: async () => runtime.status,
+  };
+}

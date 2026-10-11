@@ -28,9 +28,9 @@ flowchart LR
 
 - **Browser**: uses only the publishable key. All data access goes through RLS or web route
   handlers.
-- **Photoshop plugin**: never holds Supabase admin credentials. From Phase 3 it uses short-lived
-  connector session credentials, issued after pairing with a signed-in user. It talks only to
-  the web backend.
+- **Photoshop plugin**: never holds Supabase admin credentials. It uses a 12-hour connector
+  token, issued after a signed-in user approves its pairing code, and talks only to the web
+  backend. Tokens are stored hashed.
 - **Vision service**: not public. Every endpoint except `/health` requires the shared bearer
   token, and it refuses requests if no token is configured. It enforces a request-size limit
   (default 20 MiB) and a decoded-pixel limit (default 50 MP).
@@ -38,12 +38,25 @@ flowchart LR
   caller-supplied Zod schema. It never executes code or application commands. When no provider
   is configured it is disabled, and every workflow still works through manual controls.
 
+## Data and jobs (Phase 3)
+
+- **Projects:** a project has members with `owner`, `editor` or `reviewer` roles. RLS on every
+  table limits reads to members and writes to owners and editors (reviewers may comment).
+- **Checkpoints:** each belongs to one asset and is `pending` until its files are verified, then
+  `finalized` and immutable. Branches, parent links and direction entries can only reference
+  finalized checkpoints of the same asset (composite foreign keys plus triggers).
+- **Canvas:** connections are stored separately from `checkpoint_parents`, so canvas edits never
+  change version ancestry.
+- **Jobs:** the job lifecycle runs in Postgres functions called by the backend. The connector
+  token is checked in Next.js, and the functions re-check the session and membership.
+
 ## Storage
 
 The private buckets are `snapshots` (native documents), `previews` (PNG, JPEG, WebP) and
-`references` (PNG, JPEG, WebP). Phase 1 policies are owner-only: object paths must start with
-`<auth.uid()>/`. There is no update policy, so stored artifacts are write-once. Phase 3
-replaces these with project-membership policies.
+`references` (PNG, JPEG, WebP). Paths start with the project id (`<project>/<asset>/<checkpoint>/<file>`), and members of that
+project can read them. Only the backend writes snapshots and previews, after checking each
+file's size and digest against the checkpoint manifest. Editors may upload references. There
+are no client update or delete policies.
 
 ## Key decisions
 

@@ -1,5 +1,107 @@
 # Progress
 
+## Phase 3 — Persistence, Permissions, and Jobs
+
+Status: **complete.** All acceptance criteria are verified against the hosted Supabase project
+with the real Photoshop plugin. Branch: `phase-3-persistence`.
+
+### Completed
+
+| Task                                   | Result                                                                                                                 |
+| -------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| Data model and migrations              | All design entities plus `asset_elements`, `session_assets`, `job_events`, `canvas_connections`                        |
+| Owner, editor, reviewer permissions    | `project_role` enum; `has_project_role` / `is_project_member` / `can_edit_project` helpers                             |
+| Backend authorization                  | Every user route calls `requireUser` + `requireProjectRole`; connector routes call `requireConnectorSession`           |
+| Database and storage policies          | RLS on every table; storage access by project membership; snapshots and previews are written only by the backend       |
+| Pair connector sessions with users     | Device-code flow: plugin shows a code, a signed-in user approves it at `/pair`, the plugin polls for its token         |
+| Expiring connector credentials         | Random 32-byte tokens, stored as SHA-256, 12 h lifetime; pairing codes expire in 10 min; the poll secret is single-use |
+| Plugin polling while the panel is open | Heartbeat (open documents) and claim every 3 s                                                                         |
+| Route jobs to sessions and assets      | `claim_job`: same application, declared operation, user can edit, and (by default) the asset's document is open there  |
+
+Job requirements:
+
+- **Unique operation ids:** `jobs.operation_id` and `checkpoints.operation_id` are unique, and `create_job` is idempotent.
+- **Explicit transitions:** enforced by a trigger, with every change logged in `job_events`.
+- **Leases:** 120 s.
+- **Bounded retries:** `max_attempts` 1–10, default 3.
+- **Stored results:** `jobs.result` and `jobs.error`.
+- **Reconciliation:** expired leases are checked for a finalized checkpoint with the job's operation id
+  before re-queueing. The plugin also keeps a local ledger and reuses its first capture on retry.
+
+### Files and migrations
+
+- Migrations: `20261011000000_core_data_model.sql`, `…000100_jobs_and_connectors.sql`,
+  `…000200_project_storage_policies.sql`, `…000300_function_grants.sql`, `…000400_table_grants.sql`.
+- `packages/contracts/src/api.ts`: connector ↔ backend request and response schemas.
+- `apps/web/src/server/` (`http.ts`, `auth.ts`, `connector-auth.ts`) and the routes under
+  `src/app/api/{projects,jobs,connector}`; pages `/login` and `/pair`.
+- `apps/web/tests/integration/` (Vitest, local stack only), `scripts/e2e-connector.mts`, and the
+  updated `scripts/verify-supabase.mts`.
+- `connectors/photoshop/src/sync/` (API client, runtime, ledger, store), `src/dev/actions.ts`,
+  and connection UI in the panel.
+
+### Verification performed (actual results)
+
+| Check                                                         | Result                                                                                                                                                                                                                        |
+| ------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `pnpm typecheck`, `pnpm lint`, `pnpm test`, `format:check`    | Pass (24 unit tests)                                                                                                                                                                                                          |
+| `pnpm --filter web build`                                     | Pass                                                                                                                                                                                                                          |
+| `pnpm --filter web test:integration` (local stack)            | 16/16: role permissions, hidden session secrets, routing, duplicate delivery, pending checkpoints hidden, digest mismatch, lease retries, reconciliation, invalid transitions, expired sessions, history constraints, storage |
+| `pnpm --filter web verify:supabase` (hosted)                  | 15/15                                                                                                                                                                                                                         |
+| `pnpm --filter web e2e:connector` (hosted + Photoshop 27.8.0) | **24/24**, listed below                                                                                                                                                                                                       |
+
+End-to-end checks, using the real plugin and the real API routes:
+
+- Pairing: a code was shown, an unknown code was rejected, approval worked, and the token is
+  bound to the user and expires. Pairing secrets were cleared.
+- The plugin linked an open document, and the heartbeat mapped it to the asset.
+- A capture job ran claim → capture → upload → finalize. The stored snapshot and preview match
+  their manifest digests (198,180-byte PSD). Resubmitting the operation id returned the same job
+  and no new checkpoint.
+- Interrupted delivery: a fault was injected before finalize and the lease was expired.
+  Result: transitions `queued leased queued leased succeeded`, attempt 2, the retry reused the
+  first capture and uploaded 0 files, and exactly one checkpoint exists. The pending checkpoint
+  stayed hidden until finalized.
+- A job for a document that isn't open stayed queued, with 0 attempts.
+- An outsider got 404 on listing, job creation and job reads, and couldn't download the
+  snapshot. A fake token got 401, and direct `claim_job` RPC calls got `42501`.
+- When the token expired, the plugin stopped and asked to pair again.
+
+### Problems found and fixed during verification
+
+- **Hosted grants:** the hosted project grants no table or function privileges to API roles by
+  default, unlike the local CLI stack. Fixed with the explicit grant migrations, which also revoke
+  the local defaults so local tests now match hosted behavior.
+- **Local stack versions:** `supabase link` pinned the hosted service versions, which CLI 2.75
+  could not run. Upgraded the Supabase CLI to 2.120.0.
+- **Audit log trigger:** it was inserting before the job row existed. Split into before
+  (validate) and after (log) triggers.
+- **Route wrapper:** it swallowed Next's prerender bailout. It now calls `connection()` first.
+- **E2E fixture:** overwriting an open PSD triggered a Photoshop dialog. Each run now uses a new
+  file, and the run closes its documents at the end.
+
+### Known limitations
+
+- Stored-file integrity is checked with FNV-1a 64 against the manifest. This detects corruption,
+  not tampering by a paired client.
+- `/api/connector/pair/start` is unauthenticated and not rate limited. Pending sessions expire
+  after 10 minutes but are not purged.
+- Uploads pass through the Next.js backend (50 MiB snapshot limit) so it can verify digests
+  before storing.
+- Assets are matched to documents by file path, so moving or renaming a PSD breaks the link
+  until it is relinked.
+- Member management looks users up by email across at most 4,000 accounts (paged admin API).
+- Jobs only run while the panel is open. There is no push delivery.
+- Proposals and canvas tables exist but have no API yet (Phases 4–5).
+
+### Blockers requiring user input
+
+None.
+
+### Recommended next phase
+
+Phase 4 (canvas and branching).
+
 ## Phase 2 — Connector Contract and Photoshop Feasibility
 
 Status: **complete.** All acceptance criteria are verified in Photoshop 27.8.0. Branch:

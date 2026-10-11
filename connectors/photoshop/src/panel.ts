@@ -2,12 +2,15 @@ import { ConnectorError } from "@sonder/connector-sdk";
 import { host, storage } from "uxp";
 
 import { PhotoshopConnector } from "./connector";
+import { devActions } from "./dev/actions";
 import { runFeasibilitySuite, type StepResult } from "./dev/suite";
 import { startTriggerWatcher } from "./dev/trigger";
 import { getOrCreateFolder } from "./ps/files";
+import { BACKEND_URL } from "./sync/api";
+import { ConnectorRuntime, type RuntimeStatus } from "./sync/runtime";
 
-const BACKEND_URL = "http://localhost:3000";
 const connector = new PhotoshopConnector();
+const runtime = new ConnectorRuntime();
 let running = false;
 
 const $ = (id: string) => document.getElementById(id)!;
@@ -76,11 +79,67 @@ async function runSuite(runId: string, root?: Parameters<typeof runFeasibilitySu
   }
 }
 
+function renderConnection(status: RuntimeStatus) {
+  const c = status.connection;
+  const text =
+    c.state === "active"
+      ? `Connected as ${c.user.email ?? c.user.id} until ${new Date(c.expiresAt).toLocaleString()}`
+      : c.state === "pairing"
+        ? `Enter code ${c.code} at ${BACKEND_URL}/pair`
+        : c.state === "expired"
+          ? c.reason
+          : "Not connected";
+  $("connection").textContent = text;
+  $("connect").textContent = c.state === "active" ? "Disconnect" : "Connect";
+  $("linking").hidden = c.state !== "active";
+  const job = status.lastJob;
+  $("jobs").textContent = [
+    `Linked documents open: ${status.assets.length}`,
+    job ? `Last job: ${job.operation} (attempt ${job.attempt}) — ${job.outcome}` : "",
+    status.error ? `Error: ${status.error}` : "",
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
+async function loadProjects() {
+  const api = runtime.api();
+  if (!api) return;
+  const { projects } = await api.projects();
+  const select = $("project") as HTMLSelectElement;
+  select.innerHTML = "";
+  for (const project of projects) {
+    const option = document.createElement("option");
+    option.value = project.id;
+    option.textContent = project.name;
+    select.appendChild(option);
+  }
+}
+
+$("connect").addEventListener("click", () => {
+  const action =
+    runtime.status.connection.state === "active" ? runtime.disconnect() : runtime.pair();
+  void action.catch((error) => log(String(error)));
+});
+$("reload-projects").addEventListener(
+  "click",
+  () => void loadProjects().catch((error) => log(String(error))),
+);
+$("link").addEventListener("click", () => {
+  const projectId = ($("project") as HTMLSelectElement).value;
+  if (!projectId) return log("Choose a project first.");
+  void runtime
+    .linkActiveDocument(projectId)
+    .then((asset) => log(`Linked "${asset.name}" to the project.`))
+    .catch((error) => log(String(error)));
+});
 $("refresh").addEventListener("click", () => void refresh());
 $("read").addEventListener("click", () => void readActive());
 $("suite").addEventListener("click", () => void runSuite(`manual-${Date.now()}`));
 
+runtime.onChange(renderConnection);
+void runtime.start().then(() => loadProjects().catch(() => undefined));
 void refresh();
-void startTriggerWatcher((runId, root) => runSuite(runId, root)).catch((error) =>
-  log(`Dev trigger unavailable: ${String(error)}`),
+void startTriggerWatcher(devActions(runtime, (runId, root) => runSuite(runId, root))).catch(
+  (error) => log(`Dev trigger unavailable: ${String(error)}`),
 );

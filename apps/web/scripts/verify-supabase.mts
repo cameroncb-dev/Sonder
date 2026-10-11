@@ -1,6 +1,6 @@
 /**
- * Verifies Supabase connectivity, private buckets, and authenticated
- * upload/download. Creates a throwaway user and removes it afterwards.
+ * Verifies Supabase connectivity, private buckets, and project-scoped storage
+ * access. Creates throwaway users and a project, and removes them afterwards.
  *
  *   pnpm --filter web verify:supabase
  *
@@ -9,7 +9,7 @@
  */
 import { randomUUID } from "node:crypto";
 
-import { createClient } from "@supabase/supabase-js";
+import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 
 const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
 const publishableKey = process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY;
@@ -40,50 +40,81 @@ async function main() {
     check(`bucket '${id}' exists and is private`, Boolean(bucket && !bucket.public));
   }
 
-  const email = `sonder-verify-${randomUUID()}@example.com`;
-  const password = randomUUID();
-  const { data: created, error: createError } = await admin.auth.admin.createUser({
-    email,
-    password,
-    email_confirm: true,
-  });
-  check("create temporary user", !createError, createError?.message);
-  if (!created?.user) return;
-  const userId = created.user.id;
-  const path = `${userId}/verify-${randomUUID()}.txt`;
-  const payload = `sonder ${new Date().toISOString()}`;
+  // Two throwaway users: a project member and an outsider.
+  const users: Array<{ id: string; client: SupabaseClient }> = [];
+  for (const label of ["member", "outsider"]) {
+    const email = `sonder-verify-${label}-${randomUUID()}@example.com`;
+    const password = randomUUID();
+    const { data, error } = await admin.auth.admin.createUser({
+      email,
+      password,
+      email_confirm: true,
+    });
+    check(`create temporary ${label}`, !error, error?.message);
+    if (!data?.user) return;
+    const client = createClient(url!, publishableKey!, noSession);
+    const { error: signInError } = await client.auth.signInWithPassword({ email, password });
+    check(`${label} signs in with publishable key`, !signInError, signInError?.message);
+    users.push({ id: data.user.id, client });
+  }
+  const [member, outsider] = users as [(typeof users)[0], (typeof users)[0]];
+  let projectId: string | undefined;
 
   try {
-    const user = createClient(url!, publishableKey!, noSession);
-    const { error: signInError } = await user.auth.signInWithPassword({ email, password });
-    check("sign in with publishable key", !signInError, signInError?.message);
-
-    const { error: uploadError } = await user.storage
-      .from("snapshots")
-      .upload(path, new Blob([payload], { type: "text/plain" }));
-    check("authenticated upload to own folder", !uploadError, uploadError?.message);
-
-    const { data: downloaded, error: downloadError } = await user.storage
-      .from("snapshots")
-      .download(path);
-    const text = downloaded ? await downloaded.text() : "";
+    const { data: project, error: projectError } = await member.client.rpc("create_project", {
+      p_name: "verify",
+    });
+    projectId = (project as { id?: string } | null)?.id;
     check(
-      "authenticated download matches upload",
-      !downloadError && text === payload,
+      "member creates a project (database reachable)",
+      !projectError && !!projectId,
+      projectError?.message,
+    );
+    if (!projectId) return;
+
+    const refPath = `${projectId}/verify-${randomUUID()}.png`;
+    const payload = new Blob([`sonder ${new Date().toISOString()}`], { type: "image/png" });
+    const { error: uploadError } = await member.client.storage
+      .from("references")
+      .upload(refPath, payload);
+    check("member uploads a private reference", !uploadError, uploadError?.message);
+
+    const { data: downloaded, error: downloadError } = await member.client.storage
+      .from("references")
+      .download(refPath);
+    check(
+      "member downloads it",
+      !downloadError && (await downloaded!.text()) === (await payload.text()),
       downloadError?.message,
     );
 
-    const { error: foreignError } = await user.storage
+    const { data: outsiderData } = await outsider.client.storage
+      .from("references")
+      .download(refPath);
+    check("outsider download is denied", !outsiderData);
+
+    const { error: snapshotError } = await member.client.storage
       .from("snapshots")
-      .upload(`${randomUUID()}/intrusion.txt`, new Blob(["x"], { type: "text/plain" }));
-    check("upload to another user's folder is denied", Boolean(foreignError));
+      .upload(`${projectId}/x/${randomUUID()}.psd`, new Blob(["x"]));
+    check("clients cannot write snapshots directly", Boolean(snapshotError));
 
     const anonymous = createClient(url!, publishableKey!, noSession);
-    const { data: anonData } = await anonymous.storage.from("snapshots").download(path);
+    const { data: anonData } = await anonymous.storage.from("references").download(refPath);
     check("anonymous download is denied", !anonData);
+
+    const { data: hidden } = await outsider.client
+      .from("projects")
+      .select("id")
+      .eq("id", projectId);
+    check("outsider cannot see the project", (hidden ?? []).length === 0);
   } finally {
-    await admin.storage.from("snapshots").remove([path]);
-    await admin.auth.admin.deleteUser(userId);
+    if (projectId) {
+      const { data: objects } = await admin.storage.from("references").list(projectId);
+      if (objects?.length)
+        await admin.storage.from("references").remove(objects.map((o) => `${projectId}/${o.name}`));
+      await admin.from("projects").delete().eq("id", projectId);
+    }
+    for (const user of users) await admin.auth.admin.deleteUser(user.id);
   }
 }
 

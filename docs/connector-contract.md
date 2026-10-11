@@ -125,14 +125,41 @@ size and digest. Otherwise the result is `CHECKPOINT_INCOMPLETE`.
 2. **Coordinated update**: applies a shared theme across assets, each through its own connector.
 3. **Asset transfer**: moves content between applications. Out of scope for the demo.
 
-## Transport
+## Transport (Phase 3)
 
-- The plugin calls the web backend over HTTP. The plugin manifest allow-lists
-  `http://localhost:3000` for development. Production origins must be added to
-  `requiredPermissions.network.domains`.
-- Phase 3 adds pairing: a signed-in user approves a plugin session in the web app, and the plugin
-  receives an expiring connector token. Jobs are delivered by polling while the panel is open,
-  with unique operation ids, leases and bounded retries.
-- The plugin never receives Supabase secret keys or the vision service token.
-- The development trigger (`<plugin data>/dev/trigger.json`) is only for running the feasibility
-  suite from a terminal. It reads the plugin's own data folder and is not a job transport.
+All connector traffic goes to the web backend. The plugin holds one credential: an expiring
+connector token. It never receives Supabase keys or the vision token. Schemas live in
+`packages/contracts/src/api.ts`.
+
+| Endpoint                                                    | Auth        | Purpose                                                                        |
+| ----------------------------------------------------------- | ----------- | ------------------------------------------------------------------------------ |
+| `POST /api/connector/pair/start`                            | none        | Register the manifest; returns code, session id, poll secret                   |
+| `POST /api/connector/pair/approve`                          | user cookie | Signed-in user approves a code                                                 |
+| `POST /api/connector/pair/poll`                             | poll secret | Returns the token once, after approval                                         |
+| `POST /api/connector/heartbeat`                             | token       | Report open documents; returns the matched assets                              |
+| `GET /api/connector/projects`, `POST /api/connector/assets` | token       | List editable projects; link a document as an asset                            |
+| `POST /api/connector/jobs/claim`                            | token       | Lease the next compatible job                                                  |
+| `POST /api/connector/jobs/:id/complete` and `/fail`         | token       | Report the outcome; `fail` with `retryable` re-queues within `max_attempts`    |
+| `POST /api/connector/checkpoints`                           | token       | Begin (or resume) the checkpoint for a leased job                              |
+| `PUT /api/connector/checkpoints/:id/files/:kind`            | token       | Upload `native` or `preview`; size and digest are checked against the manifest |
+| `POST /api/connector/checkpoints/:id/finalize`              | token       | Finalize and complete the job atomically                                       |
+
+**Job routing (`claim_job`):** a job goes only to a session that meets all of these:
+
+- the same `application`;
+- the job's operation is listed in the session's manifest `operations`;
+- the paired user is an owner or editor of the job's project;
+- for jobs with `requires_asset_session`, the session reported the asset's document as open
+  within the last 2 minutes.
+
+**Delivery guarantees:**
+
+- Operation ids are unique, so resubmitting returns the existing job.
+- Checkpoints are keyed by operation id, so repeated delivery resumes the same checkpoint and
+  skips files already stored.
+- Expired leases are reconciled before a retry: if the side effect exists, the job is marked
+  succeeded.
+- The plugin keeps a ledger of finished operations and reuses its first capture on retry.
+
+The development trigger (`<plugin data>/dev/trigger.json`) only drives local test actions
+(suite, fixture, pairing, fault injection). It is not a job transport.

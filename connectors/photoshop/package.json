@@ -11,7 +11,8 @@
   },
   "dependencies": {
     "@sonder/connector-sdk": "workspace:*",
-    "@sonder/contracts": "workspace:*"
+    "@sonder/contracts": "workspace:*",
+    "zod": "4.6.5"
   },
   "devDependencies": {
     "@types/photoshop": "25.0.4",

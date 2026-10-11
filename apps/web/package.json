@@ -9,9 +9,13 @@
     "lint": "eslint",
     "typecheck": "next typegen && tsc --noEmit",
     "test": "vitest run",
-    "verify:supabase": "node --env-file-if-exists=.env.local scripts/verify-supabase.mts"
+    "verify:supabase": "node --env-file-if-exists=.env.local scripts/verify-supabase.mts",
+    "test:integration": "vitest run --config vitest.integration.config.mts",
+    "e2e:connector": "node --env-file-if-exists=.env.local scripts/e2e-connector.mts"
   },
   "dependencies": {
+    "@sonder/connector-sdk": "workspace:*",
+    "@sonder/contracts": "workspace:*",
     "@supabase/ssr": "0.12.7",
     "@supabase/supabase-js": "2.117.3",
     "@xyflow/react": "12.12.0",

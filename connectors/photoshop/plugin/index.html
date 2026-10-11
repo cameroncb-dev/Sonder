@@ -7,6 +7,13 @@
         color: var(--uxp-host-text-color);
         font-size: 12px;
       }
+      h3 {
+        margin: 12px 0 4px;
+        font-size: 12px;
+      }
+      #jobs {
+        white-space: pre-wrap;
+      }
       h2 {
         margin: 0 0 8px;
         font-size: 14px;
@@ -35,6 +42,22 @@
     <div class="row"><span class="label">Photoshop:</span> <span id="host">—</span></div>
     <div class="row"><span class="label">Active document:</span> <span id="doc">—</span></div>
     <div class="row"><span class="label">Backend:</span> <span id="backend">not checked</span></div>
+    <h3>Connection</h3>
+    <div class="row" id="connection">Not connected</div>
+    <div class="actions">
+      <sp-button id="connect">Connect</sp-button>
+    </div>
+    <div id="linking" hidden>
+      <div class="row">
+        <select id="project"></select>
+        <sp-button id="reload-projects" variant="secondary">Reload</sp-button>
+      </div>
+      <div class="actions">
+        <sp-button id="link" variant="secondary">Link active document</sp-button>
+      </div>
+    </div>
+    <div class="row" id="jobs"></div>
+    <h3>Development</h3>
     <div class="actions">
       <sp-button id="refresh" variant="secondary">Refresh</sp-button>
       <sp-button id="read" variant="secondary">Read document</sp-button>

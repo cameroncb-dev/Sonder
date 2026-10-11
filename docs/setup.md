@@ -97,8 +97,13 @@ Local auth settings (site URL, callback allow-list) live in `supabase/config.tom
 ### Verify
 
 ```sh
-pnpm --filter web verify:supabase
+pnpm --filter web verify:supabase      # hosted or local, per apps/web/.env.local
+pnpm --filter web test:integration     # database tests; local stack only (refuses other URLs)
 ```
+
+The hosted project grants API roles nothing by default. Every new table or function needs
+explicit `grant` statements in its migration (see `20261011000400_table_grants.sql`). The
+migrations revoke the local stack's broader defaults, so missing grants fail locally too.
 
 This checks bucket privacy, then creates a temporary user, uploads and downloads a private
 file, and confirms that anonymous and cross-user access are denied. It deletes the user and the
@@ -128,6 +133,21 @@ file at the end.
 6. Open the **Sonder** panel from the menu bar: Plugins → Sonder → Sonder. It shows the
    Photoshop version, the active document, and whether `http://localhost:3000/api/health` is
    reachable. **Read document** lists supported layers and their properties.
+
+### Connecting the plugin to Sonder
+
+1. Sign in at `http://localhost:3000/login`.
+2. In the Sonder panel, click **Connect**. It shows a code such as `ABCD-2345`.
+3. Open `http://localhost:3000/pair`, enter the code, and click **Approve**. The panel switches to
+   "Connected as …". The token lasts 12 hours, then you connect again.
+4. Save your document, choose a project in the panel, and click **Link active document**.
+5. Jobs for linked documents run while the panel is open.
+
+End-to-end check (dev server running, panel open with Load & Watch):
+
+```sh
+pnpm --filter web e2e:connector
+```
 
 ### Feasibility suite (real Photoshop checks)
 
