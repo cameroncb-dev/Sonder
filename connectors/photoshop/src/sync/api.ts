@@ -1,8 +1,10 @@
 import {
   CheckpointBeginResponse,
   type CheckpointBeginRequest,
+  CheckpointElementsResponse,
   ClaimResponse,
   type ConnectorManifest,
+  type HeartbeatRequest,
   HeartbeatResponse,
   PairPollResponse,
   PairStartResponse,
@@ -70,11 +72,19 @@ export class SonderApi {
     );
   }
 
-  heartbeat(openDocuments: Array<{ path: string; name: string }>) {
+  heartbeat(openDocuments: HeartbeatRequest["openDocuments"]) {
     return request(
       "/api/connector/heartbeat",
       { token: this.token, json: { openDocuments } },
       HeartbeatResponse,
+    );
+  }
+
+  checkpointElements(checkpointId: string) {
+    return request(
+      `/api/connector/checkpoints/${checkpointId}/elements`,
+      { method: "GET", token: this.token },
+      CheckpointElementsResponse,
     );
   }
 
@@ -140,6 +150,23 @@ export class SonderApi {
       body: bytes.slice().buffer,
       contentType,
     });
+  }
+
+  /** Native snapshot bytes of a finalized checkpoint. */
+  async downloadCheckpoint(checkpointId: string): Promise<Uint8Array> {
+    const response = await fetch(
+      `${BACKEND_URL}/api/connector/checkpoints/${checkpointId}/download`,
+      {
+        headers: { authorization: `Bearer ${this.token}` },
+      },
+    );
+    if (!response.ok)
+      throw new ApiError(
+        response.status,
+        "DOWNLOAD_FAILED",
+        `Snapshot download failed (HTTP ${response.status})`,
+      );
+    return new Uint8Array(await response.arrayBuffer());
   }
 
   finalize(checkpointId: string) {

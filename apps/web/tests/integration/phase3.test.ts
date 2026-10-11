@@ -454,7 +454,7 @@ describe("history constraints", () => {
     expect(pending.error?.message).toMatch(/not finalized/);
     const ok = await editor.client
       .from("branches")
-      .insert({ asset_id: assetId, name: "main", head_checkpoint_id: checkpointA });
+      .insert({ asset_id: assetId, name: "release", head_checkpoint_id: checkpointA });
     expect(ok.error).toBeNull();
   });
 

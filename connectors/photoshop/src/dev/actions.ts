@@ -1,5 +1,6 @@
-import { app, core } from "photoshop";
+import { app, constants, core } from "photoshop";
 
+import { allLayers } from "../ps/elements";
 import { getFile, getOrCreateFolder, type Folder } from "../ps/files";
 import type { ConnectorRuntime } from "../sync/runtime";
 import { documentPath } from "../sync/runtime";
@@ -52,6 +53,31 @@ export function devActions(
       );
       return { closed };
     },
+    /** Changes the first text layer of the active document without saving (makes it dirty). */
+    "edit-text": async (command: TriggerCommand) => {
+      const text = typeof command.text === "string" ? command.text : "Edited";
+      return core.executeAsModal(
+        async () => {
+          const doc = app.activeDocument;
+          if (!doc) throw new Error("No active document");
+          const layer = allLayers(doc).find((l) => l.kind === constants.LayerKind.TEXT);
+          if (!layer) throw new Error("No text layer");
+          layer.textItem.contents = text;
+          return { document: doc.name, layer: layer.name, saved: doc.saved };
+        },
+        { commandName: "Sonder: e2e edit" },
+      );
+    },
+    "save-active": async () =>
+      core.executeAsModal(
+        async () => {
+          const doc = app.activeDocument;
+          if (!doc) throw new Error("No active document");
+          await doc.save();
+          return { document: doc.name, path: documentPath(doc), saved: doc.saved };
+        },
+        { commandName: "Sonder: e2e save" },
+      ),
     link: async (command: TriggerCommand) => {
       if (typeof command.projectId !== "string") throw new Error("projectId required");
       return runtime.linkActiveDocument(command.projectId);

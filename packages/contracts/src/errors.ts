@@ -17,6 +17,8 @@ export const IssueCode = z.enum([
   "MISSING_FONT",
   "INVALID_VALUE",
   "CHECKPOINT_INCOMPLETE",
+  "UNSAVED_CHANGES",
+  "UNCAPTURED_CHANGES",
   "APPLICATION_ERROR",
 ]);
 export type IssueCode = z.infer<typeof IssueCode>;

@@ -152,6 +152,8 @@ async function main() {
   const owner = await signedInUser("owner");
   const outsider = await signedInUser("outsider");
   let projectId: string | undefined;
+  const ownDocuments: string[] = [];
+  const extraUsers: string[] = [];
   try {
     const created = await owner.api("POST", "/api/projects", { name: "E2E posters" });
     projectId = created.body.project?.id;
@@ -162,6 +164,8 @@ async function main() {
     );
 
     const doc = await trigger("open-fixture");
+    // Close only this run's documents afterwards; other working copies may hold someone's work.
+    if (typeof doc.path === "string") ownDocuments.push(doc.path.replace(/[^/]+$/, ""));
     check("Photoshop opens a saved test document", typeof doc.path === "string", doc.path);
 
     await trigger("pair");
@@ -199,6 +203,7 @@ async function main() {
     );
 
     const asset = await trigger("link", { projectId });
+    ownDocuments.push(`/working/${asset.id}/`);
     check("plugin links the open document as a project asset", !!asset.id, asset.name);
     await waitFor("heartbeat reports the asset", async () =>
       (await pluginStatus()).assets.some((a: { assetId: string }) => a.assetId === asset.id),
@@ -207,11 +212,9 @@ async function main() {
 
     // --- Capture through a job ---
     const op1 = `e2e-${randomUUID()}`;
-    const job1 = await owner.api("POST", `/api/projects/${projectId}/jobs`, {
-      operation: "captureCheckpoint",
-      assetId: asset.id,
+    const job1 = await owner.api("POST", `/api/projects/${projectId}/assets/${asset.id}/capture`, {
       operationId: op1,
-      params: { message: "Original" },
+      message: "Original",
     });
     check("owner queues a capture job", job1.status === 201, job1.body.job?.status);
     const done1 = await waitJob(owner.api, job1.body.job.id, "succeeded");
@@ -259,9 +262,7 @@ async function main() {
       cpRow!.manifest.applicationVersion,
     );
 
-    const again = await owner.api("POST", `/api/projects/${projectId}/jobs`, {
-      operation: "captureCheckpoint",
-      assetId: asset.id,
+    const again = await owner.api("POST", `/api/projects/${projectId}/assets/${asset.id}/capture`, {
       operationId: op1,
     });
     const { count: c1 } = await admin
@@ -276,10 +277,9 @@ async function main() {
     // --- Interrupted delivery: lease expires after uploads, before finalize ---
     await trigger("fault", { stage: "before-finalize" });
     const op2 = `e2e-${randomUUID()}`;
-    const job2 = await owner.api("POST", `/api/projects/${projectId}/jobs`, {
-      operation: "captureCheckpoint",
-      assetId: asset.id,
+    const job2 = await owner.api("POST", `/api/projects/${projectId}/assets/${asset.id}/capture`, {
       operationId: op2,
+      message: "Second on main",
     });
     await waitFor("plugin pauses before finalize", async () =>
       (await pluginStatus()).lastJob?.outcome?.includes("paused") ? true : undefined,
@@ -324,19 +324,242 @@ async function main() {
       c2 === 1 && done2.job.result?.checkpointId === pending?.id,
     );
 
+    // --- Phase 4: branches, checkout, history and canvas ---
+    const historyUrl = `/api/projects/${projectId}/assets/${asset.id}/history`;
+    const h1 = (await owner.api("GET", historyUrl)).body;
+    const main = h1.branches.find((b: { name: string }) => b.name === "main");
+    check(
+      "first capture created and activated main; second capture advanced it",
+      main?.head_checkpoint_id === pending?.id && h1.asset.activeBranchId === main?.id,
+    );
+    const cp2 = h1.checkpoints.find((c: { id: string }) => c.id === pending?.id);
+    check("second checkpoint's parent is the first", cp2?.parents?.[0] === cp1.id, cp2?.parents);
+
+    const alt = await owner.api("POST", `/api/projects/${projectId}/assets/${asset.id}/branches`, {
+      name: "alt",
+      checkpointId: cp1.id,
+    });
+    check(
+      "owner creates a branch from the first checkpoint",
+      alt.status === 201,
+      alt.body.branch?.name,
+    );
+
+    const checkoutJob = async (force = false) => {
+      const r = await owner.api("POST", `/api/projects/${projectId}/assets/${asset.id}/checkout`, {
+        branchId: alt.body.branch.id,
+        force,
+      });
+      return waitFor("checkout to finish", async () => {
+        const j = await owner.api("GET", `/api/jobs/${r.body.job.id}`);
+        return ["succeeded", "failed"].includes(j.body.job?.status) ? j.body.job : undefined;
+      });
+    };
+
+    /** Waits until the canvas reports the given document state for the asset. */
+    const documentState = (unsaved: boolean, uncaptured: boolean | null) =>
+      waitFor(
+        `document state unsaved=${unsaved} uncaptured=${uncaptured}`,
+        async () => {
+          const c = (await owner.api("GET", `/api/projects/${projectId}/canvas`)).body;
+          const status = c.assets.find((a: { id: string }) => a.id === asset.id)?.connector;
+          return status?.unsaved === unsaved && status?.uncaptured === uncaptured;
+        },
+        30_000,
+      ).then(
+        () => true,
+        () => false,
+      );
+    check("canvas reports the captured document as up to date", await documentState(false, false));
+
+    await trigger("edit-text", { text: "Unsaved edit" });
+    check("canvas reports unsaved changes after an edit", await documentState(true, null));
+    const unsaved = await checkoutJob();
+    check(
+      "checkout refuses a document with unsaved changes",
+      unsaved.status === "failed" && unsaved.error?.code === "UNSAVED_CHANGES",
+      unsaved.error?.message,
+    );
+    await trigger("save-active");
+    check("canvas reports uncaptured changes after saving", await documentState(false, true));
+    const uncaptured = await checkoutJob();
+    check(
+      "checkout refuses saved but uncaptured changes",
+      uncaptured.status === "failed" && uncaptured.error?.code === "UNCAPTURED_CHANGES",
+      uncaptured.error?.message,
+    );
+    const stillMain = (await owner.api("GET", historyUrl)).body.asset.activeBranchId;
+    check("failed checkouts leave main active", stillMain === main?.id);
+
+    const forced = await checkoutJob(true);
+    const h2 = (await owner.api("GET", historyUrl)).body;
+    check(
+      "forced checkout opens alt as a working copy and makes it active",
+      forced.status === "succeeded" &&
+        h2.asset.activeBranchId === alt.body.branch.id &&
+        h2.asset.path === forced.result?.path &&
+        h2.asset.path !== doc.path,
+      h2.asset.path,
+    );
+    await waitFor("heartbeat maps the working copy", async () =>
+      (await pluginStatus()).assets.some((a: { path: string }) => a.path === forced.result?.path),
+    );
+
+    const op3 = `e2e-${randomUUID()}`;
+    const job3 = await owner.api("POST", `/api/projects/${projectId}/assets/${asset.id}/capture`, {
+      operationId: op3,
+      message: "First on alt",
+    });
+    const done3 = await waitJob(owner.api, job3.body.job.id, "succeeded");
+    const h3 = (await owner.api("GET", historyUrl)).body;
+    const cp3 = h3.checkpoints.find((c: { id: string }) => c.id === done3.job.result?.checkpointId);
+    const heads = Object.fromEntries(
+      h3.branches.map((b: { name: string; head_checkpoint_id: string }) => [
+        b.name,
+        b.head_checkpoint_id,
+      ]),
+    );
+    check(
+      "capture on alt descends from the first checkpoint; main is untouched",
+      cp3?.parents?.[0] === cp1.id && heads.alt === cp3?.id && heads.main === pending?.id,
+      heads,
+    );
+    const { data: sources } = await admin
+      .from("checkpoints")
+      .select("id,native_digest,status")
+      .in("id", [cp1.id, pending!.id]);
+    check(
+      "branching preserved both source checkpoints",
+      sources?.length === 2 &&
+        sources.every((s) => s.status === "finalized") &&
+        sources.find((s) => s.id === cp1.id)?.native_digest === cpRow!.manifest.files.native.digest,
+    );
+    check(
+      "history shows three checkpoints with previews",
+      h3.checkpoints.length === 3 &&
+        h3.checkpoints.every((c: { previewUrl: string }) => !!c.previewUrl),
+    );
+
+    const canvas = (await owner.api("GET", `/api/projects/${projectId}/canvas`)).body;
+    const card = canvas.items.find((i: { ref_id: string }) => i.ref_id === asset.id);
+    const canvasAsset = canvas.assets.find((a: { id: string }) => a.id === asset.id);
+    check("asset card is placed on the canvas automatically", !!card, { x: card?.x, y: card?.y });
+    check(
+      "canvas shows application, active branch, connector status and supported actions",
+      canvasAsset?.application === "photoshop" &&
+        canvasAsset?.activeBranch?.name === "alt" &&
+        canvasAsset?.connector.online === true &&
+        ["captureCheckpoint", "openCheckpoint"].every((op) =>
+          canvasAsset.connector.capabilities?.operations.includes(op),
+        ),
+      canvasAsset?.connector.capabilities?.operations,
+    );
+
+    const note = await owner.api("POST", `/api/projects/${projectId}/canvas/items`, {
+      itemType: "note",
+      x: 10,
+      y: 10,
+      content: { text: "Try the alt headline font" },
+    });
+    const moved = await owner.api(
+      "PATCH",
+      `/api/projects/${projectId}/canvas/items/${note.body.item.id}`,
+      {
+        version: note.body.item.version,
+        x: 640,
+        y: 360,
+      },
+    );
+    const stale = await owner.api(
+      "PATCH",
+      `/api/projects/${projectId}/canvas/items/${note.body.item.id}`,
+      {
+        version: note.body.item.version,
+        x: 1,
+        y: 1,
+      },
+    );
+    check(
+      "stale canvas save is rejected with the current version",
+      moved.status === 200 && stale.status === 409 && stale.body.error?.details?.current?.x === 640,
+    );
+    const reloaded = (await owner.api("GET", `/api/projects/${projectId}/canvas`)).body;
+    const persisted = reloaded.items.find((i: { id: string }) => i.id === note.body.item.id);
+    check(
+      "layout persists after reload",
+      persisted?.x === 640 && persisted?.y === 360 && persisted?.version === 2,
+    );
+
+    const parentCount = async () =>
+      (
+        await admin
+          .from("checkpoint_parents")
+          .select("*", { count: "exact", head: true })
+          .eq("asset_id", asset.id)
+      ).count;
+    const before = await parentCount();
+    const link = await owner.api("POST", `/api/projects/${projectId}/canvas/connections`, {
+      fromItemId: card.id,
+      toItemId: note.body.item.id,
+    });
+    const movedAsset = await owner.api(
+      "PATCH",
+      `/api/projects/${projectId}/canvas/items/${card.id}`,
+      {
+        version: card.version,
+        x: card.x + 50,
+        y: card.y,
+      },
+    );
+    check(
+      "connecting and moving cards leaves version ancestry unchanged",
+      link.status === 201 && movedAsset.status === 200 && (await parentCount()) === before,
+      before,
+    );
+
+    const reviewer = await signedInUser("reviewer");
+    extraUsers.push(reviewer.id);
+    const added = await owner.api("POST", `/api/projects/${projectId}/members`, {
+      email: reviewer.email,
+      role: "reviewer",
+    });
+    const reviewerHistory = await reviewer.api("GET", historyUrl);
+    const reviewerMove = await reviewer.api(
+      "PATCH",
+      `/api/projects/${projectId}/canvas/items/${card.id}`,
+      {
+        version: 2,
+        x: 0,
+        y: 0,
+      },
+    );
+    const reviewerCapture = await reviewer.api(
+      "POST",
+      `/api/projects/${projectId}/assets/${asset.id}/capture`,
+      {},
+    );
+    check(
+      "reviewers see history but cannot move cards or capture",
+      added.status === 201 &&
+        reviewerHistory.status === 200 &&
+        reviewerMove.status === 403 &&
+        reviewerCapture.status === 403,
+      [reviewerHistory.status, reviewerMove.status, reviewerCapture.status],
+    );
+
     // --- Routing: a job for a document that is not open is not delivered ---
     const closedAsset = await owner.api("POST", `/api/projects/${projectId}/assets`, {
       name: "Closed",
       application: "photoshop",
       nativeLocator: { path: "/nonexistent/closed.psd" },
     });
-    const job3 = await owner.api("POST", `/api/projects/${projectId}/jobs`, {
+    const closedJob = await owner.api("POST", `/api/projects/${projectId}/jobs`, {
       operation: "captureCheckpoint",
       assetId: closedAsset.body.asset.id,
       operationId: `e2e-${randomUUID()}`,
     });
     await sleep(10_000);
-    const still = await owner.api("GET", `/api/jobs/${job3.body.job.id}`);
+    const still = await owner.api("GET", `/api/jobs/${closedJob.body.job.id}`);
     check(
       "job for an unopened document stays queued",
       still.body.job.status === "queued" && still.body.job.attempts === 0,
@@ -399,8 +622,9 @@ async function main() {
     }
     await admin.auth.admin.deleteUser(owner.id);
     await admin.auth.admin.deleteUser(outsider.id);
+    for (const id of extraUsers) await admin.auth.admin.deleteUser(id);
     await trigger("disconnect").catch(() => undefined);
-    await trigger("close-docs", { match: "/feasibility/docs-e2e" }).catch(() => undefined);
+    for (const match of ownDocuments) await trigger("close-docs", { match }).catch(() => undefined);
   }
 }
 

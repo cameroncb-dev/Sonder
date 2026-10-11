@@ -1,14 +1,27 @@
-import { type AssetRef, ConnectorError } from "@sonder/connector-sdk";
-import type { ConnectorJob, PairStartResponse } from "@sonder/contracts";
-import { app } from "photoshop";
+import { type AssetRef, ConnectorError, diffElements, fnv1a64 } from "@sonder/connector-sdk";
+import type { ConnectorJob, Element, PairStartResponse } from "@sonder/contracts";
+import { action, app, constants, core } from "photoshop";
 
 import { type PhotoshopCheckpoint, PhotoshopConnector } from "../connector";
-import { getFile, getOrCreateFolder, readBytes } from "../ps/files";
+import { elementKey } from "../core/identity";
+import { findDocument } from "../ps/elements";
+import { asPsEntry, getFile, getOrCreateFolder, readBytes, writeBytes } from "../ps/files";
 import { ApiError, SonderApi } from "./api";
 import * as ledger from "./ledger";
 import { connectorFolder, load, save } from "./store";
 
 const TICK_MS = 3000;
+const CHECK_TIMEOUT_MS = 5000;
+
+function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(`Timed out after ${ms} ms`)), ms);
+    promise.then(
+      (value) => (clearTimeout(timer), resolve(value)),
+      (error: unknown) => (clearTimeout(timer), reject(error)),
+    );
+  });
+}
 
 interface StoredSession {
   token: string;
@@ -44,13 +57,20 @@ export function documentPath(doc: { path: string; name: string }): string | unde
 }
 
 function openDocuments() {
-  const docs: Array<{ path: string; name: string; id: number }> = [];
+  const docs: Array<{ path: string; name: string; id: number; saved: boolean }> = [];
   for (let i = 0; i < app.documents.length; i++) {
     const doc = app.documents[i];
     const path = doc && documentPath(doc);
-    if (doc && path) docs.push({ path, name: doc.name, id: doc.id });
+    if (doc && path) docs.push({ path, name: doc.name, id: doc.id, saved: doc.saved });
   }
   return docs;
+}
+
+/** Whether a saved open document differs from its branch head, and what it was compared with. */
+interface ChangeCheck {
+  docId: number;
+  headCheckpointId: string;
+  uncaptured: boolean;
 }
 
 /**
@@ -64,6 +84,11 @@ export class ConnectorRuntime {
   private busy = false;
   private readonly faults = new Set<string>();
   private readonly listeners = new Set<(status: RuntimeStatus) => void>();
+  /** Head of each linked document's active branch, from the last heartbeat (keyed by path). */
+  private heads = new Map<string, string | null>();
+  /** Latest comparison per path; dropped when the document is saved so it is checked again. */
+  private readonly checks = new Map<string, ChangeCheck>();
+  private readonly headElements = new Map<string, Element[]>();
   status: RuntimeStatus = {
     connection: { state: "unpaired" },
     assets: [],
@@ -92,6 +117,8 @@ export class ConnectorRuntime {
       this.update({ connection: { state: "expired", reason: "Session expired; connect again" } });
     }
     setInterval(() => void this.tick(), TICK_MS);
+    // A save changes what is on disk, so recheck it against the branch head.
+    void action.addNotificationListener(["save"], () => this.checks.clear());
   }
 
   async pair() {
@@ -171,12 +198,59 @@ export class ConnectorRuntime {
 
   private async work() {
     const api = this.api()!;
+    const docs = openDocuments();
     const heartbeat = await api.heartbeat(
-      openDocuments().map(({ path, name }) => ({ path, name })),
+      docs.map(({ path, name, id, saved }) => {
+        const check = this.checks.get(path);
+        const current =
+          check && check.docId === id && check.headCheckpointId === this.heads.get(path);
+        return {
+          path,
+          name,
+          unsaved: !saved,
+          ...(saved && current ? { uncaptured: check.uncaptured } : {}),
+        };
+      }),
     );
+    this.heads = new Map(heartbeat.assets.map((a) => [a.path, a.headCheckpointId ?? null]));
     this.update({ assets: heartbeat.assets, error: undefined });
     const { job } = await api.claim();
-    if (job) await this.execute(api, job);
+    if (job) {
+      await this.execute(api, job);
+      this.checks.clear();
+    } else {
+      await this.checkForChanges(api, docs);
+    }
+  }
+
+  /**
+   * Compares saved linked documents with their branch heads, at most one per tick and only when
+   * something changed (a save, a new head, a different open document). Reported on the next tick.
+   */
+  private async checkForChanges(api: SonderApi, docs: ReturnType<typeof openDocuments>) {
+    for (const doc of docs) {
+      const head = this.heads.get(doc.path);
+      if (!doc.saved || !head) continue;
+      const check = this.checks.get(doc.path);
+      if (check && check.docId === doc.id && check.headCheckpointId === head) continue;
+      try {
+        let expected = this.headElements.get(head);
+        if (!expected) {
+          expected = (await api.checkpointElements(head)).elements;
+          this.headElements.set(head, expected);
+        }
+        // Bounded so a read Photoshop never answers cannot stall heartbeats and job claims.
+        const { elements } = await withTimeout(
+          this.connector.readProperties({ id: String(doc.id), name: doc.name }),
+          CHECK_TIMEOUT_MS,
+        );
+        const uncaptured = diffElements(expected, elements, elementKey).length > 0;
+        this.checks.set(doc.path, { docId: doc.id, headCheckpointId: head, uncaptured });
+      } catch {
+        // Photoshop may refuse reads while busy (e.g. editing text); try again next tick.
+      }
+      return;
+    }
   }
 
   private async execute(api: SonderApi, job: ConnectorJob) {
@@ -207,6 +281,8 @@ export class ConnectorRuntime {
       switch (job.operation) {
         case "captureCheckpoint":
           return report(await this.capture(api, job));
+        case "openCheckpoint":
+          return report(await this.checkout(api, job));
         case "readProperties": {
           const result = await this.connector.readProperties(this.assetFor(job));
           await ledger.record({ operationId: job.operationId, result });
@@ -252,6 +328,77 @@ export class ConnectorRuntime {
       });
     }
     return { id: String(doc.id), name: doc.name };
+  }
+
+  /**
+   * Opens a branch head as a Sonder-managed working copy and reports its path.
+   * Refuses (non-retryable) when the open document has unsaved changes or
+   * changes that were never captured, so switching branches never loses work.
+   */
+  private async checkout(api: SonderApi, job: ConnectorJob): Promise<string> {
+    const params = job.params as {
+      branchId: string;
+      branchName: string;
+      checkpointId: string;
+      native: { name: string; bytes: number; digest: string };
+      currentHeadElements: Element[] | null;
+      force?: boolean;
+    };
+    const currentPath =
+      typeof job.assetLocator?.path === "string" ? job.assetLocator.path : undefined;
+    const open = openDocuments().find((d) => d.path === currentPath);
+    const openDoc = open ? findDocument(open.id) : undefined;
+
+    if (openDoc) {
+      if (!openDoc.saved) {
+        throw new ConnectorError({
+          code: "UNSAVED_CHANGES",
+          message: `"${openDoc.name}" has unsaved changes. Save and capture it before switching branches.`,
+        });
+      }
+      if (!params.force && params.currentHeadElements) {
+        const { elements } = await this.connector.readProperties({
+          id: String(openDoc.id),
+          name: openDoc.name,
+        });
+        const differences = diffElements(params.currentHeadElements, elements, elementKey);
+        if (differences.length) {
+          throw new ConnectorError({
+            code: "UNCAPTURED_CHANGES",
+            message: `"${openDoc.name}" has changes that were never captured. Capture them first, or use Switch anyway.`,
+            details: { differences },
+          });
+        }
+      }
+    }
+
+    const bytes = await api.downloadCheckpoint(params.checkpointId);
+    if (bytes.length !== params.native.bytes || fnv1a64(bytes) !== params.native.digest) {
+      throw new ConnectorError({
+        code: "CHECKPOINT_INCOMPLETE",
+        message: "Downloaded snapshot does not match its manifest",
+      });
+    }
+    const working = await getOrCreateFolder(
+      await getOrCreateFolder(await connectorFolder(), "working"),
+      job.assetId ?? "unknown",
+    );
+    const safeName = params.branchName.replace(/[^\w.-]+/g, "_").slice(0, 60) || "branch";
+    const file = await writeBytes(working, `${safeName}-${Date.now()}.psd`, bytes);
+
+    const opened = await core.executeAsModal(
+      async () => {
+        // Saved and captured (checked above), so closing loses nothing.
+        if (openDoc) await openDoc.close(constants.SaveOptions.DONOTSAVECHANGES);
+        return app.open(asPsEntry(file));
+      },
+      { commandName: `Sonder: switch to ${params.branchName}` },
+    );
+    const path = documentPath(opened) ?? file.nativePath;
+    const result = { path, branchId: params.branchId, checkpointId: params.checkpointId };
+    await ledger.record({ operationId: job.operationId, result });
+    await api.complete(job.id, result);
+    return `switched to ${params.branchName}`;
   }
 
   private async capture(api: SonderApi, job: ConnectorJob): Promise<string> {

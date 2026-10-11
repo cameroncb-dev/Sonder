@@ -2,6 +2,7 @@ import { z } from "zod";
 
 import { CheckpointManifest } from "./checkpoint";
 import { ConnectorManifest } from "./connector";
+import { Element } from "./elements";
 
 /** Connector ↔ backend HTTP contract. All bodies are JSON unless noted. */
 
@@ -44,15 +45,34 @@ export const PairApproveRequest = z.object({
 export const OpenDocument = z.object({
   path: z.string().min(1).max(4096),
   name: z.string().max(300),
+  /** True when the application reports edits not yet saved to disk. Omitted when unknown. */
+  unsaved: z.boolean().optional(),
+  /** True when the saved content differs from the active branch head. Omitted when unknown. */
+  uncaptured: z.boolean().optional(),
 });
 export const HeartbeatRequest = z.object({ openDocuments: z.array(OpenDocument).max(200) });
 export type HeartbeatRequest = z.infer<typeof HeartbeatRequest>;
 
 export const HeartbeatResponse = z.object({
   sessionExpiresAt: z.iso.datetime(),
-  assets: z.array(z.object({ assetId: z.uuid(), projectId: z.uuid(), path: z.string() })),
+  assets: z.array(
+    z.object({
+      assetId: z.uuid(),
+      projectId: z.uuid(),
+      path: z.string(),
+      /** Head of the asset's active branch, for comparing the open document; null before any capture. */
+      headCheckpointId: z.uuid().nullable().optional(),
+    }),
+  ),
 });
 export type HeartbeatResponse = z.infer<typeof HeartbeatResponse>;
+
+/** Elements recorded in a checkpoint, for connectors comparing an open document with it. */
+export const CheckpointElementsResponse = z.object({
+  checkpointId: z.uuid(),
+  elements: z.array(Element),
+});
+export type CheckpointElementsResponse = z.infer<typeof CheckpointElementsResponse>;
 
 export const LinkAssetRequest = z.object({
   projectId: z.uuid(),
