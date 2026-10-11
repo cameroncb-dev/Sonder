@@ -3,9 +3,9 @@ import { requireProjectRole, requireUser } from "@/server/auth";
 import { handler, unwrap } from "@/server/http";
 import { type AssetRow, connectorStatus } from "@/server/projects";
 
-const GRID = { x: 80, y: 80, dx: 320, dy: 260, columns: 4 };
+const GRID = { x: 80, y: 80, dx: 320, dy: 260 };
 
-/** Everything the canvas needs in one request. Missing asset cards are placed on a grid. */
+/** Everything the canvas needs in one request. Missing asset cards are placed beside existing cards. */
 export const GET = handler(
   async (_request: Request, ctx: RouteContext<"/api/projects/[projectId]/canvas">) => {
     const { projectId } = await ctx.params;
@@ -34,7 +34,12 @@ export const GET = handler(
     const missing = assets.filter((a) => !placed.has(a.id));
     if (missing.length) {
       // Card placement is presentation data derived from assets, so the backend creates it for any member.
-      const start = items.length;
+      // Start a row to the right of the existing content so new cards land near what people see.
+      const xs = items.map((i) => Number(i.x));
+      const ys = items.map((i) => Number(i.y));
+      const origin = items.length
+        ? { x: Math.round(Math.max(...xs) + GRID.dx), y: Math.round(Math.min(...ys)) }
+        : { x: GRID.x, y: GRID.y };
       // Concurrent loads may race to place the same card; the unique index keeps one.
       const created = unwrap(
         await createAdminClient()
@@ -44,8 +49,8 @@ export const GET = handler(
               project_id: projectId,
               item_type: "asset",
               ref_id: asset.id,
-              x: GRID.x + ((start + i) % GRID.columns) * GRID.dx,
-              y: GRID.y + Math.floor((start + i) / GRID.columns) * GRID.dy,
+              x: origin.x + i * GRID.dx,
+              y: origin.y,
             })),
             { onConflict: "project_id,ref_id", ignoreDuplicates: true },
           )

@@ -93,6 +93,8 @@ function CanvasInner({ projectId }: { projectId: string }) {
   /** Soft refresh: asset status and previews only, never positions. */
   const [refreshKey, setRefreshKey] = useState(0);
   const versions = useRef(new Map<string, number>());
+  /** Frame all cards after the next full load: on open, and when a new document card appears. */
+  const fitPending = useRef(true);
   const fileInput = useRef<HTMLInputElement>(null);
   const flow = useReactFlow();
   const colorMode = useColorMode();
@@ -131,6 +133,11 @@ function CanvasInner({ projectId }: { projectId: string }) {
         setData(canvas);
         setNodes(toNodes(canvas, (item, text) => void saveNote(item, text)));
         setEdges(toEdges(canvas));
+        if (fitPending.current) {
+          fitPending.current = false;
+          // Wait for the new nodes to render before framing them.
+          requestAnimationFrame(() => void flow.fitView({ padding: 0.2, duration: 200 }));
+        }
       })
       .catch((e) => !cancelled && report(e));
     return () => {
@@ -146,6 +153,13 @@ function CanvasInner({ projectId }: { projectId: string }) {
     api<CanvasData>("GET", `${base}/canvas`)
       .then((canvas) => {
         if (cancelled) return;
+        // A document linked since the last full load gets a new card; load it with its position.
+        if (canvas.items.some((i) => !versions.current.has(i.id))) {
+          fitPending.current = canvas.items.some(
+            (i) => i.item_type === "asset" && !versions.current.has(i.id),
+          );
+          return setReloadKey((k) => k + 1);
+        }
         setData(canvas);
         setNodes((current) =>
           current.map((node) => {
