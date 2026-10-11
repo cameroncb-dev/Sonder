@@ -779,6 +779,20 @@ async function main() {
       "job for an unopened document stays queued",
       still.body.job.status === "queued" && still.body.job.attempts === 0,
     );
+    const keepHistory = await owner.api("DELETE", `/api/projects/${projectId}/assets/${asset.id}`);
+    const removeEmpty = await owner.api(
+      "DELETE",
+      `/api/projects/${projectId}/assets/${closedAsset.body.asset.id}`,
+    );
+    const { count: closedLeft } = await admin
+      .from("assets")
+      .select("id", { count: "exact", head: true })
+      .eq("id", closedAsset.body.asset.id);
+    check(
+      "documents without checkpoints can be removed; documents with history cannot",
+      keepHistory.status === 409 && removeEmpty.status === 204 && closedLeft === 0,
+      [keepHistory.status, removeEmpty.status],
+    );
 
     // --- Authorization ---
     const outsiderAssets = await outsider.api("GET", `/api/projects/${projectId}/assets`);

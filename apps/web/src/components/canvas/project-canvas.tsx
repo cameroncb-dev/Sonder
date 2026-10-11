@@ -378,6 +378,10 @@ function CanvasInner({ projectId }: { projectId: string }) {
             asset={asset}
             onClose={() => setSelectedAsset(null)}
             onChanged={() => setRefreshKey((k) => k + 1)}
+            onRemoved={() => {
+              setSelectedAsset(null);
+              reload();
+            }}
           />
         )}
       </div>

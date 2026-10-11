@@ -42,11 +42,14 @@ export function Inspector({
   asset,
   onClose,
   onChanged,
+  onRemoved,
 }: {
   projectId: string;
   asset: CanvasAsset;
   onClose: () => void;
   onChanged: () => void;
+  /** Called after the document was removed from the project. */
+  onRemoved: () => void;
 }) {
   const [history, setHistory] = useState<History | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
@@ -60,6 +63,7 @@ export function Inspector({
   const [notice, setNotice] = useState<string | null>(null);
   const [reloadKey, setReloadKey] = useState(0);
   const [submitting, setSubmitting] = useState(false);
+  const [confirmRemove, setConfirmRemove] = useState(false);
   const historyUrl = `/api/projects/${projectId}/assets/${asset.id}/history`;
   const onChangedRef = useRef(onChanged);
   useEffect(() => {
@@ -400,6 +404,41 @@ export function Inspector({
       )}
 
       {notice && <p className="text-xs text-zinc-600 dark:text-zinc-400">{notice}</p>}
+      {canEdit && history.checkpoints.length === 0 && (
+        <section className="mt-auto flex flex-wrap items-center gap-2 border-t border-zinc-200 pt-3 dark:border-zinc-800">
+          {confirmRemove ? (
+            <>
+              <span className="text-xs text-zinc-600 dark:text-zinc-400">
+                Remove this card? The file itself isn&apos;t touched.
+              </span>
+              <button
+                className="rounded border border-red-300 px-2 py-0.5 text-xs text-red-700 dark:border-red-800 dark:text-red-300"
+                onClick={() =>
+                  void api("DELETE", `/api/projects/${projectId}/assets/${asset.id}`)
+                    .then(onRemoved)
+                    .catch((e) => setNotice(e instanceof Error ? e.message : String(e)))
+                }
+              >
+                Remove
+              </button>
+              <button
+                className="rounded border border-zinc-300 px-2 py-0.5 text-xs dark:border-zinc-700"
+                onClick={() => setConfirmRemove(false)}
+              >
+                Cancel
+              </button>
+            </>
+          ) : (
+            <button
+              className="text-xs text-zinc-500 hover:text-red-600"
+              onClick={() => setConfirmRemove(true)}
+              title="Only documents without checkpoints can be removed"
+            >
+              Remove from project
+            </button>
+          )}
+        </section>
+      )}
       {combining && (
         <CombineView
           projectId={projectId}
