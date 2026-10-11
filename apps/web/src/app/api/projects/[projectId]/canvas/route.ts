@@ -95,6 +95,40 @@ export const GET = handler(
     );
     const referenceUrls = await sign("references", references);
     const status = await connectorStatus(projectId, assets);
+    const directionRows = unwrap(
+      await supabase
+        .from("directions")
+        .select("id,name,description,direction_entries(asset_id,checkpoint_id)")
+        .eq("project_id", projectId)
+        .order("created_at"),
+    ) as Array<{
+      id: string;
+      name: string;
+      description: string | null;
+      direction_entries: Array<{ asset_id: string; checkpoint_id: string }>;
+    }>;
+    const pinned = directionRows.flatMap((d) => d.direction_entries.map((e) => e.checkpoint_id));
+    const pinnedRows = pinned.length
+      ? (unwrap(
+          await supabase.from("checkpoints").select("id,preview_path").in("id", pinned),
+        ) as Array<{ id: string; preview_path: string }>)
+      : [];
+    const pinnedUrls = await sign(
+      "previews",
+      pinnedRows.map((r) => r.preview_path),
+    );
+    const directions = directionRows.map((d) => ({
+      id: d.id,
+      name: d.name,
+      description: d.description,
+      previews: d.direction_entries.map((e) => {
+        const row = pinnedRows.find((r) => r.id === e.checkpoint_id);
+        return {
+          assetId: e.asset_id,
+          url: row ? (pinnedUrls.get(row.preview_path) ?? null) : null,
+        };
+      }),
+    }));
     const themes = unwrap(
       await supabase
         .from("themes")
@@ -107,6 +141,7 @@ export const GET = handler(
       project,
       role,
       themes,
+      directions,
       assets: assets.map((asset) => {
         const branch = branches.find((b) => b.id === asset.active_branch_id);
         const head = headRows.find((h) => h.id === branch?.head_checkpoint_id);

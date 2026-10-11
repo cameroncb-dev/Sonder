@@ -20,9 +20,15 @@ export type PlacingTool =
       kind: "theme";
       name: string;
       colors: Record<"primary" | "background" | "text" | "accent", string>;
+    }
+  | {
+      kind: "direction";
+      name: string;
+      description: string;
+      entries: Array<{ assetId: string; checkpointId: string }>;
     };
 
-type Panel = "notes" | "text" | "sections" | "themes" | "references";
+type Panel = "notes" | "text" | "sections" | "themes" | "directions" | "references";
 
 const THEME_DEFAULT = {
   primary: "#1E3A5F",
@@ -126,12 +132,16 @@ export function Toolbox({
   onPlace,
   onCancel,
   onAddReference,
+  onChooseDirection,
 }: {
   placing: PlacingTool | null;
   onPlace: (tool: PlacingTool) => void;
   onCancel: () => void;
   onAddReference: () => void;
+  /** Opens the version picker for a new direction; placing follows once versions are chosen. */
+  onChooseDirection: (direction: { name: string; description: string }) => void;
 }) {
+  const [direction, setDirection] = useState({ name: "", description: "" });
   const [saved, setSaved] = useState<Saved>(DEFAULTS);
   // Browser storage is read after mount so server and client render the same markup.
   useEffect(() => {
@@ -276,6 +286,40 @@ export function Toolbox({
           }
         >
           Place theme
+        </button>
+      </Section>
+
+      <Section id="directions" title="Directions" open={isOpen("directions")} onToggle={toggle}>
+        <p className="text-xs text-zinc-500">
+          Save a named look: the exact version of each document, kept as it is even as you keep
+          working. Reopen it later from its card.
+        </p>
+        <Label>Name</Label>
+        <input
+          className="rounded border border-zinc-300 bg-white px-2 py-1 text-sm dark:border-zinc-600 dark:bg-zinc-900"
+          placeholder="e.g. Bold launch"
+          value={direction.name}
+          onChange={(e) => setDirection((d) => ({ ...d, name: e.target.value }))}
+        />
+        <Label>Description (optional)</Label>
+        <textarea
+          className="h-16 resize-none rounded border border-zinc-300 bg-white px-2 py-1 text-sm dark:border-zinc-600 dark:bg-zinc-900"
+          value={direction.description}
+          onChange={(e) => setDirection((d) => ({ ...d, description: e.target.value }))}
+        />
+        <button
+          type="button"
+          className={placeButton}
+          disabled={!direction.name.trim()}
+          onClick={() => {
+            onChooseDirection({
+              name: direction.name.trim(),
+              description: direction.description.trim(),
+            });
+            setDirection({ name: "", description: "" });
+          }}
+        >
+          Choose versions…
         </button>
       </Section>
 

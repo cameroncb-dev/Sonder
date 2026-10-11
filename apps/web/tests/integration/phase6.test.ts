@@ -271,3 +271,110 @@ describe("coordinated theme updates", () => {
     expect((await head(assets[2]!)).head_checkpoint_id).toBe(moved);
   });
 });
+
+describe("directions", () => {
+  let directionId: string;
+  let pinned: string[];
+
+  it("pins exact versions that stay put when branches move", async () => {
+    pinned = await Promise.all(
+      assets.slice(0, 2).map(async (id) => (await head(id)).head_checkpoint_id),
+    );
+    const d = await rpc<{ id: string }>(editor.client, "create_direction", {
+      p_project_id: projectId,
+      p_name: "Bold launch",
+      p_description: "",
+      p_entries: assets.slice(0, 2).map((assetId, i) => ({ assetId, checkpointId: pinned[i] })),
+    });
+    directionId = d.id;
+
+    // The poster moves on.
+    const job = await rpc<{ id: string }>(editor.client, "create_job", {
+      p_project_id: projectId,
+      p_asset_id: assets[0],
+      p_operation: "captureCheckpoint",
+      p_operation_id: opId(),
+      p_params: {},
+      p_requires_asset_session: false,
+    });
+    await claim(job.id);
+    const newer = await upload(job.id, assets[0]!, "00000000000000f1");
+    const { data: a } = await admin
+      .from("assets")
+      .select("active_branch_id")
+      .eq("id", assets[0])
+      .single();
+    await admin
+      .from("branches")
+      .update({ head_checkpoint_id: newer })
+      .eq("id", a!.active_branch_id);
+
+    const { data: entries } = await editor.client
+      .from("direction_entries")
+      .select("asset_id,checkpoint_id")
+      .eq("direction_id", directionId);
+    expect(entries!.map((e) => e.checkpoint_id).sort()).toEqual([...pinned].sort());
+  });
+
+  it("refuses edits to entries and unapproved candidates", async () => {
+    const edit = await editor.client
+      .from("direction_entries")
+      .update({ checkpoint_id: pinned[1] })
+      .eq("direction_id", directionId)
+      .eq("asset_id", assets[0]!);
+    // Row security has no update policy for entries, so the edit changes nothing.
+    expect(edit.data).toBeNull();
+    const { data: unchanged } = await admin
+      .from("direction_entries")
+      .select("checkpoint_id")
+      .eq("direction_id", directionId)
+      .eq("asset_id", assets[0]!)
+      .single();
+    expect(unchanged!.checkpoint_id).toBe(pinned[0]);
+
+    // A theme candidate that was never approved (built above, then left ready).
+    const created = await rpc<{ items: Array<{ id: string }> }>(
+      editor.client,
+      "create_coordinated_proposal",
+      {
+        p_project_id: projectId,
+        p_request: { themeId: "t" },
+        p_items: [
+          {
+            assetId: assets[1],
+            include: true,
+            jobParams: {
+              targetCheckpoint: {
+                id: (await head(assets[1]!)).head_checkpoint_id,
+                manifest: manifest(),
+              },
+              changeSet: { mappings: [], changes: [] },
+            },
+          },
+        ],
+      },
+    );
+    const job = await jobFor(created.items[0]!.id);
+    await claim(job.id);
+    const candidate = await upload(job.id, assets[1]!, "00000000000000f2");
+    expect(
+      await errorCode(
+        rpc(editor.client, "create_direction", {
+          p_project_id: projectId,
+          p_name: "Unapproved",
+          p_description: "",
+          p_entries: [{ assetId: assets[1], checkpointId: candidate }],
+        }),
+      ),
+    ).toBe("23503");
+  });
+
+  it("drops only a deleted document's entry", async () => {
+    await editor.client.from("assets").delete().eq("id", assets[1]!);
+    const { data: entries } = await admin
+      .from("direction_entries")
+      .select("asset_id")
+      .eq("direction_id", directionId);
+    expect(entries).toEqual([{ asset_id: assets[0] }]);
+  });
+});

@@ -4,6 +4,7 @@ import { type Node, type NodeProps } from "@xyflow/react";
 
 import { NoteCard, SectionCard, TextCard } from "./canvas-cards";
 import { handles } from "./handles";
+import { DirectionCard } from "./direction-panel";
 import { ThemeCard } from "./theme-panel";
 import { APPLICATION_LABELS, type CanvasAsset, OPERATION_LABELS } from "./types";
 
@@ -114,4 +115,5 @@ export const nodeTypes = {
   section: SectionCard,
   reference: ReferenceCard,
   theme: ThemeCard,
+  direction: DirectionCard,
 };

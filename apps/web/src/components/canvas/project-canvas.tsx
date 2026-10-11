@@ -23,6 +23,7 @@ import { NoteContent, SECTION_SIZE, SectionContent, TextContent } from "@/lib/ca
 import { createClient } from "@/lib/supabase/client";
 
 import { Inspector } from "./inspector";
+import { DirectionPanel, DirectionPicker } from "./direction-panel";
 import { ThemePanel } from "./theme-panel";
 import { type PlacingTool, Toolbox, WaffleButton } from "./toolbox";
 import { nodeTypes } from "./nodes";
@@ -128,6 +129,10 @@ function toNodes(canvas: CanvasData, handlers: CardHandlers, focusId: string | n
         const theme = canvas.themes.find((t) => t.id === item.ref_id);
         return theme ? [{ ...common, type: "theme", data: { theme } }] : [];
       }
+      case "direction": {
+        const direction = canvas.directions.find((d) => d.id === item.ref_id);
+        return direction ? [{ ...common, type: "direction", data: { direction } }] : [];
+      }
       case "reference":
         return [
           {
@@ -157,7 +162,17 @@ function CanvasInner({ projectId }: { projectId: string }) {
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
   const [selectedAsset, setSelectedAsset] = useState<string | null>(null);
   const [selectedTheme, setSelectedTheme] = useState<string | null>(null);
-  const [pendingThemeDelete, setPendingThemeDelete] = useState<string | null>(null);
+  const [selectedDirection, setSelectedDirection] = useState<string | null>(null);
+  /** Theme or direction awaiting delete confirmation. */
+  const [pendingCardDelete, setPendingCardDelete] = useState<{
+    kind: "theme" | "direction";
+    id: string;
+  } | null>(null);
+  /** Direction whose versions are being chosen before it is placed. */
+  const [choosingDirection, setChoosingDirection] = useState<{
+    name: string;
+    description: string;
+  } | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   /** Document awaiting delete confirmation in the canvas popup. */
   const [pendingDelete, setPendingDelete] = useState<CanvasAsset | null>(null);
@@ -399,14 +414,28 @@ function CanvasInner({ projectId }: { projectId: string }) {
     nodes: Node[];
     edges: Edge[];
   }) => {
+    const directionCard = doomed.find((n) => n.type === "direction");
+    if (directionCard)
+      setPendingCardDelete({
+        kind: "direction",
+        id: (directionCard.data as { direction: { id: string } }).direction.id,
+      });
     const themeCard = doomed.find((n) => n.type === "theme");
-    if (themeCard) setPendingThemeDelete((themeCard.data as { theme: { id: string } }).theme.id);
+    if (themeCard)
+      setPendingCardDelete({
+        kind: "theme",
+        id: (themeCard.data as { theme: { id: string } }).theme.id,
+      });
     const card = doomed.find((n) => n.type === "asset");
+    // Documents, themes and directions are deleted only after confirming in a popup.
+    const guarded = (n: Node) => n.type === "asset" || n.type === "theme" || n.type === "direction";
     if (!card)
-      return themeCard ? { nodes: doomed.filter((n) => n.type !== "theme"), edges: links } : true;
+      return themeCard || directionCard
+        ? { nodes: doomed.filter((n) => !guarded(n)), edges: links }
+        : true;
     setPendingDelete((card.data as { asset: CanvasAsset }).asset);
     return {
-      nodes: doomed.filter((n) => n.type !== "asset" && n.type !== "theme"),
+      nodes: doomed.filter((n) => !guarded(n)),
       edges: links,
     };
   };
@@ -445,6 +474,28 @@ function CanvasInner({ projectId }: { projectId: string }) {
   /** Places the toolbox's chosen card where the canvas was clicked. */
   async function place(tool: PlacingTool, at: { x: number; y: number }) {
     setPlacing(null);
+    if (tool.kind === "direction") {
+      try {
+        const { direction } = await api<{ direction: { id: string } }>(
+          "POST",
+          `${base}/directions`,
+          {
+            name: tool.name,
+            description: tool.description,
+            entries: tool.entries,
+            x: at.x,
+            y: at.y,
+          },
+        );
+        setSelectedAsset(null);
+        setSelectedTheme(null);
+        setSelectedDirection(direction.id);
+        reload();
+      } catch (e) {
+        report(e);
+      }
+      return;
+    }
     if (tool.kind === "theme") {
       try {
         const { theme } = await api<{ theme: { id: string } }>("POST", `${base}/themes`, {
@@ -589,6 +640,7 @@ function CanvasInner({ projectId }: { projectId: string }) {
             onPlace={setPlacing}
             onCancel={() => setPlacing(null)}
             onAddReference={() => fileInput.current?.click()}
+            onChooseDirection={setChoosingDirection}
           />
         )}
         <div
@@ -615,6 +667,11 @@ function CanvasInner({ projectId }: { projectId: string }) {
               setSelectedTheme(
                 node.type === "theme" ? (node.data as { theme: { id: string } }).theme.id : null,
               );
+              setSelectedDirection(
+                node.type === "direction"
+                  ? (node.data as { direction: { id: string } }).direction.id
+                  : null,
+              );
             }}
             onPaneClick={(event) => {
               if (placing)
@@ -624,6 +681,7 @@ function CanvasInner({ projectId }: { projectId: string }) {
                 );
               setSelectedAsset(null);
               setSelectedTheme(null);
+              setSelectedDirection(null);
             }}
             nodesConnectable={canEdit}
             colorMode={colorMode}
@@ -634,6 +692,16 @@ function CanvasInner({ projectId }: { projectId: string }) {
             <MiniMap pannable zoomable />
           </ReactFlow>
         </div>
+        {selectedDirection && (
+          <DirectionPanel
+            key={selectedDirection}
+            projectId={projectId}
+            directionId={selectedDirection}
+            onClose={() => setSelectedDirection(null)}
+            onChanged={() => setRefreshKey((k) => k + 1)}
+            onDelete={() => setPendingCardDelete({ kind: "direction", id: selectedDirection })}
+          />
+        )}
         {selectedTheme && (
           <ThemePanel
             key={selectedTheme}
@@ -641,7 +709,7 @@ function CanvasInner({ projectId }: { projectId: string }) {
             themeId={selectedTheme}
             onClose={() => setSelectedTheme(null)}
             onChanged={() => setReloadKey((k) => k + 1)}
-            onDelete={() => setPendingThemeDelete(selectedTheme)}
+            onDelete={() => setPendingCardDelete({ kind: "theme", id: selectedTheme })}
           />
         )}
         {asset && (
@@ -655,40 +723,58 @@ function CanvasInner({ projectId }: { projectId: string }) {
           />
         )}
       </div>
-      {pendingThemeDelete && (
+      {choosingDirection && data && (
+        <DirectionPicker
+          projectId={projectId}
+          assets={data.assets}
+          name={choosingDirection.name}
+          onCancel={() => setChoosingDirection(null)}
+          onConfirm={(entries) => {
+            setPlacing({ kind: "direction", ...choosingDirection, entries });
+            setChoosingDirection(null);
+          }}
+        />
+      )}
+      {pendingCardDelete && (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
-          onClick={() => setPendingThemeDelete(null)}
+          onClick={() => setPendingCardDelete(null)}
         >
           <div
             role="alertdialog"
-            aria-labelledby="theme-delete-title"
+            aria-labelledby="card-delete-title"
             className="flex w-full max-w-sm flex-col gap-4 rounded-lg bg-white p-5 shadow-xl dark:bg-zinc-900"
             onClick={(e) => e.stopPropagation()}
           >
-            <h2 id="theme-delete-title" className="font-semibold">
-              Delete {data?.themes.find((t) => t.id === pendingThemeDelete)?.name ?? "theme"}?
+            <h2 id="card-delete-title" className="font-semibold">
+              Delete{" "}
+              {(pendingCardDelete.kind === "theme" ? data?.themes : data?.directions)?.find(
+                (x) => x.id === pendingCardDelete.id,
+              )?.name ?? pendingCardDelete.kind}
+              ?
             </h2>
             <p className="text-sm text-zinc-600 dark:text-zinc-400">
-              The theme and its layer mappings are removed. Documents it was already applied to keep
-              those versions in their history.
+              {pendingCardDelete.kind === "theme"
+                ? "The theme and its layer mappings are removed. Documents it was already applied to keep those versions in their history."
+                : "The direction is removed. The versions it named stay in each document's history."}
             </p>
             <div className="flex justify-end gap-2">
               <button
                 autoFocus
                 className="rounded bg-zinc-200 px-4 py-1.5 text-sm text-zinc-800 hover:bg-zinc-300 dark:bg-zinc-700 dark:text-zinc-100 dark:hover:bg-zinc-600"
-                onClick={() => setPendingThemeDelete(null)}
+                onClick={() => setPendingCardDelete(null)}
               >
                 Cancel
               </button>
               <button
                 className="rounded bg-red-600 px-4 py-1.5 text-sm text-white hover:bg-red-700"
                 onClick={() => {
-                  const id = pendingThemeDelete;
-                  setPendingThemeDelete(null);
-                  void api("DELETE", `${base}/themes/${id}`)
+                  const { kind, id } = pendingCardDelete;
+                  setPendingCardDelete(null);
+                  void api("DELETE", `${base}/${kind === "theme" ? "themes" : "directions"}/${id}`)
                     .then(() => {
                       if (selectedTheme === id) setSelectedTheme(null);
+                      if (selectedDirection === id) setSelectedDirection(null);
                       reload();
                     })
                     .catch(report);

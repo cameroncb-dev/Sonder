@@ -49,6 +49,29 @@ export interface CanvasData {
   items: CanvasItem[];
   connections: CanvasConnection[];
   themes: CanvasTheme[];
+  directions: CanvasDirection[];
+}
+
+export interface CanvasDirection {
+  id: string;
+  name: string;
+  description: string | null;
+  previews: Array<{ assetId: string; url: string | null }>;
+}
+
+export interface DirectionDetail {
+  role: CanvasData["role"];
+  direction: { id: string; name: string; description: string | null; createdAt: string };
+  entries: Array<{
+    assetId: string;
+    assetName: string;
+    checkpointId: string;
+    message: string | null;
+    createdAt: string | null;
+    previewUrl: string | null;
+    activeBranch: string | null;
+    isCurrent: boolean;
+  }>;
 }
 
 export type ColorRole = "primary" | "background" | "text" | "accent";

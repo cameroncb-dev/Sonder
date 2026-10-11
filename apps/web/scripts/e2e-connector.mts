@@ -863,6 +863,7 @@ async function main() {
     const second = await trigger("open-fixture");
     if (typeof second.path === "string") ownDocuments.push(second.path.replace(/[^/]+$/, ""));
     const flyer = await trigger("link", { projectId });
+    ownDocuments.push(`/working/${flyer.id}/`);
     await waitFor("heartbeat maps the second document", async () =>
       (await pluginStatus()).assets.some((a: { assetId: string }) => a.assetId === flyer.id),
     );
@@ -1039,6 +1040,81 @@ async function main() {
       themed.every((t) => t.parent === t.before) &&
         previous?.length === 2 &&
         previous.every((p) => p.status === "finalized"),
+    );
+
+    // --- Phase 6: directions pin exact versions and reopen them ---
+    const pinnedVersions = Object.fromEntries(
+      await Promise.all(
+        [asset.id, flyer.id].map(async (id: string) => {
+          const { data } = await admin
+            .from("assets")
+            .select("branches!assets_active_branch_fk(head_checkpoint_id)")
+            .eq("id", id)
+            .single();
+          return [
+            id,
+            (data?.branches as unknown as { head_checkpoint_id: string }).head_checkpoint_id,
+          ];
+        }),
+      ),
+    ) as Record<string, string>;
+    const savedDirection = await owner.api("POST", `/api/projects/${projectId}/directions`, {
+      name: "Forest launch",
+      description: "Both documents in the forest theme",
+      entries: Object.entries(pinnedVersions).map(([assetId, checkpointId]) => ({
+        assetId,
+        checkpointId,
+      })),
+      x: 1200,
+      y: 500,
+    });
+    const directionUrl = `/api/projects/${projectId}/directions/${savedDirection.body.direction?.id}`;
+
+    // The flyer moves on after the direction was saved.
+    const moveOn = await owner.api(
+      "POST",
+      `/api/projects/${projectId}/assets/${flyer.id}/capture`,
+      {
+        message: "Flyer after the direction",
+      },
+    );
+    await waitJob(owner.api, moveOn.body.job.id, "succeeded");
+    const directionView = (await owner.api("GET", directionUrl)).body;
+    type Entry = { assetId: string; checkpointId: string; isCurrent: boolean };
+    const flyerEntry = (directionView.entries as Entry[] | undefined)?.find(
+      (e) => e.assetId === flyer.id,
+    );
+    check(
+      "a direction keeps the exact versions it was saved with as branches move on",
+      savedDirection.status === 201 &&
+        (directionView.entries as Entry[]).every(
+          (e) => e.checkpointId === pinnedVersions[e.assetId],
+        ) &&
+        flyerEntry?.isCurrent === false,
+      directionView.entries?.map((e: Entry) => e.isCurrent),
+    );
+
+    const reopened = await owner.api("POST", `${directionUrl}/open`, { assetIds: [flyer.id] });
+    const reopenJob = await waitFor("reopening the direction", async () => {
+      const j = await owner.api("GET", `/api/jobs/${reopened.body.opened?.[0]?.jobId}`);
+      return ["succeeded", "failed"].includes(j.body.job?.status) ? j.body.job : undefined;
+    });
+    const { data: flyerNow } = await admin
+      .from("assets")
+      .select("branches!assets_active_branch_fk(name,head_checkpoint_id)")
+      .eq("id", flyer.id)
+      .single();
+    const flyerBranch = flyerNow?.branches as unknown as {
+      name: string;
+      head_checkpoint_id: string;
+    };
+    check(
+      "reopening a direction opens the saved version on its own branch",
+      reopenJob.status === "succeeded" &&
+        reopenJob.result?.checkpointId === pinnedVersions[flyer.id] &&
+        flyerBranch.name === "Forest launch" &&
+        flyerBranch.head_checkpoint_id === pinnedVersions[flyer.id],
+      [reopenJob.status, flyerBranch?.name, reopenJob.error?.message],
     );
 
     // --- Routing: a job for a document that is not open is not delivered ---

@@ -2,7 +2,9 @@
 
 ## Phase 6 — Shared Themes, Project Directions and Canvas Additions
 
-Status: **in progress.** Branch: `phase-6-themes-canvas`.
+Status: **complete, pending the user's check of directions.** Every acceptance criterion is
+verified end to end against the hosted project with real Photoshop. Branch:
+`phase-6-themes-canvas`.
 
 Scope (from `Design_Plan.md` §15, plus canvas additions the user requested on 2026-10-11):
 
@@ -15,7 +17,6 @@ Scope (from `Design_Plan.md` §15, plus canvas additions the user requested on 2
    mappings per asset; per-asset candidates and previews; inclusion and exclusion; approval
    of the collection; per-asset status; visible partial failures.
 3. **Directions:** named collections of exact checkpoints that stay stable as branches move.
-   _(Next.)_
 
 ### Part 1 — canvas additions: built, awaiting the user's check
 
@@ -71,6 +72,37 @@ Scope (from `Design_Plan.md` §15, plus canvas additions the user requested on 2
   item), and an E2E pass with 7 new checks. Those use two real Photoshop documents, one
   theme and a forced failure, and confirm the themed colors in both manifests and that the
   previous versions are kept.
+
+### Part 3 — directions: built and verified
+
+- **Save** from the toolbox's Directions section: a name and optional description, then
+  **Choose versions…** picks one exact version per document (default: the active branch's
+  newest version; documents can be left out), then a click on the canvas places the card.
+  The card shows a thumbnail per document.
+- **Stable:** `create_direction` (migration `20261015000200_directions.sql`) pins finalized
+  checkpoints only, never unapproved candidates. Entries are immutable (the Phase 3 trigger).
+  Deleting a document removes just its entry instead of blocking the deletion.
+- **Inspect:** the direction panel lists each document's pinned version with its preview and
+  whether that document has moved on since.
+- **Reopen** ("Open all", or per document) switches each document to a branch at the pinned
+  version. It reuses the active branch or any branch already there; otherwise it creates a
+  branch named after the direction. It goes through the same switch job and safety checks as
+  Switch (shared `src/server/checkout.ts`).
+- **Delete** directions and themes from their panel, or with the Delete key, after a popup.
+- **Checks:** integration 43/43 (3 new: stable as branches move, entries can't be edited,
+  unapproved candidates refused, deleting a document drops only its entry). E2E all passed;
+  2 new checks confirm a direction keeps its versions after one document moves on, and that
+  reopening opens the exact saved version on a "Forest launch" branch.
+
+### Acceptance criteria
+
+| Criterion                                                 | Evidence                                                                                                                          |
+| --------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| One theme updates two documents through explicit mappings | E2E: both manifests have the theme's background and text colors after approval                                                    |
+| Each result remains recoverable                           | E2E: each themed version's parent is the previous version, which stays finalized                                                  |
+| A direction retrieves the intended checkpoint collection  | E2E: entries equal the pinned versions after a document moves on; reopening opens them                                            |
+| Partial failures are visible                              | E2E: forced failure → "partially_failed"; approving the rest keeps it incomplete; retry completes                                 |
+| Unsupported assets cannot receive incompatible operations | Planner tests (non-RGB, missing or wrong-kind layer, no connector) mark them "Can't apply"; they are excluded and never get a job |
 
 Notes:
 
