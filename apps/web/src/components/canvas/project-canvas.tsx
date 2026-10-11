@@ -26,6 +26,8 @@ import { nodeTypes } from "./nodes";
 import type { CanvasData, CanvasItem } from "./types";
 
 const STATUS_REFRESH_MS = 15_000;
+/** Dashed to read as an organising link, not version history. */
+const EDGE_STYLE = { strokeDasharray: "6 4", strokeWidth: 2 };
 
 const DARK_QUERY = "(prefers-color-scheme: dark)";
 
@@ -79,7 +81,7 @@ const toEdges = (canvas: CanvasData): Edge[] =>
     source: c.from_item_id,
     target: c.to_item_id,
     label: c.label ?? undefined,
-    style: { strokeDasharray: "4 4" },
+    style: EDGE_STYLE,
   }));
 
 function CanvasInner({ projectId }: { projectId: string }) {
@@ -223,7 +225,7 @@ function CanvasInner({ projectId }: { projectId: string }) {
           id: saved.id,
           source: connection.source,
           target: connection.target,
-          style: { strokeDasharray: "4 4" },
+          style: EDGE_STYLE,
         },
       ]);
     } catch (e) {
