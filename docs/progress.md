@@ -2,9 +2,9 @@
 
 ## Phase 4 — Canvas and Branching
 
-Status: **complete**, with one gap: the canvas UI has been build-checked and smoke-tested, but
-not yet used interactively in a browser (see Known limitations). All acceptance criteria are
-verified end to end against the hosted project with the real plugin. Branch: `phase-4-canvas`.
+Status: **complete.** All acceptance criteria are verified end to end against the hosted
+project with the real plugin, and the canvas was tested interactively in a browser on
+2026-10-11 (see Interactive testing). Branch: `phase-4-canvas`.
 
 ### Completed
 
@@ -19,6 +19,7 @@ verified end to end against the hosted project with the real plugin. Branch: `ph
 | Active branch and connector status | Card and inspector show the active branch, connector online/offline, and actions from the connector's capability manifest                 |
 | Side-by-side comparison            | Pick two checkpoints, then previews side by side plus a property table with differences highlighted                                       |
 | Optimistic concurrency             | Saves carry a `version`. A stale save gets 409 with the current item; the database trigger also rejects skipped versions                  |
+| Unsaved / uncaptured indicator     | The plugin reports each open linked document's state; the card and inspector show "Unsaved changes" or "Saved changes not captured yet"   |
 
 **Branching model:**
 
@@ -42,15 +43,22 @@ verified end to end against the hosted project with the real plugin. Branch: `ph
 - Plugin: the `openCheckpoint` (checkout) operation, snapshot download, and dev actions
   `edit-text` and `save-active`.
 - Contracts: new issue codes `UNSAVED_CHANGES` and `UNCAPTURED_CHANGES`.
+- Migration `20261013000000_unique_asset_links.sql`: one asset per document path per project, and
+  one canvas card per asset.
+- Migration `20261013000100_session_document_state.sql`: `session_assets.unsaved` and
+  `uncaptured`, and `report_session_documents`, which also returns each asset's branch head.
+  `report_session_assets` remains for older connectors.
+- API: `connector/checkpoints/:id/elements`, so the plugin can compare an open document with its
+  branch head.
 
 ### Verification performed (actual results)
 
-| Check                                                                   | Result                                                                                                                                                                              |
-| ----------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `pnpm typecheck`, `lint`, `test`, `format:check`, web `build`           | Pass                                                                                                                                                                                |
-| `test:integration` (local)                                              | 24/24 (8 new: main creation, parent links, branching keeps sources, compare-and-swap, checkout switching, cross-asset rejection, canvas version conflicts, connections vs ancestry) |
-| `e2e:connector` (hosted + Photoshop 27.8.0)                             | **40/40** (16 new, listed below)                                                                                                                                                    |
-| Page smoke test (`/`, `/projects`, `/projects/[id]`, `/login`, `/pair`) | 200 on each                                                                                                                                                                         |
+| Check                                                                   | Result                                                                                                                                                                                                                                      |
+| ----------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `pnpm typecheck`, `lint`, `test`, `format:check`, web `build`           | Pass                                                                                                                                                                                                                                        |
+| `test:integration` (local)                                              | 26/26 (10 new: main creation, parent links, branching keeps sources, compare-and-swap, checkout switching, cross-asset rejection, canvas version conflicts, connections vs ancestry, unique asset links and cards, reported document state) |
+| `e2e:connector` (hosted + Photoshop 27.8.0)                             | **43/43** (19 new, listed below)                                                                                                                                                                                                            |
+| Page smoke test (`/`, `/projects`, `/projects/[id]`, `/login`, `/pair`) | 200 on each                                                                                                                                                                                                                                 |
 
 New end-to-end checks:
 
@@ -68,6 +76,8 @@ New end-to-end checks:
 - A stale save got 409 with the current position, and the layout persisted after reload.
 - Connecting and moving cards left `checkpoint_parents` unchanged.
 - A reviewer can read history but gets 403 for moving cards and for capture.
+- The canvas reports a captured document as up to date, then "unsaved" after an edit, then
+  "uncaptured" after saving.
 
 ### Problems found and fixed during verification
 
@@ -79,10 +89,58 @@ New end-to-end checks:
 - **React lint rules:** state was being set synchronously inside effects. Restructured to
   effects keyed on reload counters, with cancellation.
 
+### Interactive testing (2026-10-11)
+
+The user tested the canvas in Chrome with Photoshop 2026 against the hosted project. Every check
+passed after the fixes below:
+
+- Sign up, create a project, add notes and reference images.
+- Pair the panel, link two documents, capture.
+- Compare two checkpoints.
+- Branch from an earlier checkpoint, then switch branches in both directions.
+- Both switch refusals (unsaved, uncaptured), then **Switch anyway**.
+- Capture on a branch, with history splitting into two lines.
+- Connect and delete cards; positions persist across reloads.
+
+Problems found and fixed:
+
+- **Duplicate assets:** concurrent link requests created three copies of one document, after
+  which every link returned 500. Fixed with a unique index, an on-conflict return of the existing
+  asset, and a guarded panel button.
+- **Project selection in the panel:** UXP's `<select>` reported an empty value while showing
+  the first project, so Link stopped at "Choose a project first" and the button never showed
+  Linked. The panel now tracks the selection itself. The button reads "Linked" for documents
+  already linked to the selected project.
+- **Cards out of view:** new document cards were placed on a fixed grid far from existing
+  content, and cards linked while the canvas was open didn't appear until a full reload. Cards
+  are now placed beside existing content, the view fits all cards on open and when a new
+  document appears, and the periodic refresh picks up new cards.
+- **Notes stacking:** repeated "Add note" placed notes exactly on top of each other. New cards
+  are now offset.
+- **Compare view:** the table listed added layers as rows of dashes, labelled the columns
+  Left/Right, and depended on selection order. React also warned about duplicate keys when two
+  layers shared a name. Compare now shows Before/After by date with checkpoint names, a summary,
+  rows grouped by layer with added/removed/changed badges and renames, and layer-ID keys.
+- **Repeated job clicks:** a triple click on Switch anyway queued three checkouts and opened
+  three working copies. Capture and switch buttons are now disabled while a job is pending.
+- **Dark mode:** the controls and minimap stayed light. The canvas now follows the system theme,
+  read without a hydration mismatch.
+- **Messages:** failure messages showed internal codes, and a stale "Capture queued" message
+  stayed visible after the capture finished. Both fixed.
+- **Connection handles** were hard to find. They are now larger, blue, and grow on hover.
+- **E2E cleanup** closed every Sonder working copy without saving, including the user's. It now
+  closes only the documents the test created.
+
 ### Known limitations
 
-- The canvas UI has not been exercised interactively in a browser by the developer. Data and
-  behavior are verified through the same API routes the UI calls.
+- **The original file isn't recognised after switching branches.** Switching opens a working
+  copy, and the asset then follows that copy. Reopening the original file (for example
+  `Downloads/Sonder-Test.psd`) shows it as unlinked in the panel, and linking it would create a
+  second, unrelated asset. **Decision needed:** for example, keep every path that belongs to an
+  asset and have the panel offer to switch to the branch.
+- Plugins loaded through UXP Developer Tool must be reloaded after Photoshop restarts, and Load &
+  Watch sometimes misses rebuilds (Unload, then Load & Watch, fixes it).
+- Document state on the card refreshes with the canvas (about every 15 s), not instantly.
 - Working copies live in the plugin's data folder (`…/PluginData/connector/working/`), not next
   to the original PSD.
 - History is a flat list per asset with lanes. Merges (multiple parents) are drawn but can't be
