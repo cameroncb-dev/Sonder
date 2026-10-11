@@ -45,6 +45,7 @@ export function Inspector({
   const [message, setMessage] = useState("");
   const [notice, setNotice] = useState<string | null>(null);
   const [reloadKey, setReloadKey] = useState(0);
+  const [submitting, setSubmitting] = useState(false);
   const historyUrl = `/api/projects/${projectId}/assets/${asset.id}/history`;
   const onChangedRef = useRef(onChanged);
   useEffect(() => {
@@ -75,6 +76,8 @@ export function Inspector({
 
   /** Runs an action. Jobs report progress under Recent activity, so they pass no message. */
   const run = async (fn: () => Promise<unknown>, done?: string) => {
+    if (submitting) return;
+    setSubmitting(true);
     setNotice(null);
     try {
       await fn();
@@ -83,6 +86,8 @@ export function Inspector({
       onChanged();
     } catch (e) {
       setNotice(e instanceof ApiClientError ? e.message : String(e));
+    } finally {
+      setSubmitting(false);
     }
   };
 
@@ -96,8 +101,11 @@ export function Inspector({
 
   const canEdit = history.role !== "reviewer";
   const operations = asset.connector.capabilities?.operations ?? [];
-  const canCapture = canEdit && asset.connector.online && operations.includes("captureCheckpoint");
-  const canSwitch = canEdit && operations.includes("openCheckpoint");
+  // One job at a time: repeated clicks would queue duplicate captures or open extra copies.
+  const busy = submitting || pending;
+  const canCapture =
+    canEdit && !busy && asset.connector.online && operations.includes("captureCheckpoint");
+  const canSwitch = canEdit && !busy && operations.includes("openCheckpoint");
   const checkpoint = history.checkpoints.find((c) => c.id === selected) ?? null;
   const compared = compare
     .map((id) => history.checkpoints.find((c) => c.id === id))
@@ -139,7 +147,9 @@ export function Inspector({
             title={
               canCapture
                 ? "Capture the open document onto the active branch"
-                : "Open the document in its application with the Sonder panel connected"
+                : busy
+                  ? "Waiting for the current job to finish"
+                  : "Open the document in its application with the Sonder panel connected"
             }
             onClick={() =>
               void run(async () => {
