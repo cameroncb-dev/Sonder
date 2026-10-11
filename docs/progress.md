@@ -35,29 +35,28 @@ Supabase CLI 2.75.0, Docker 29.1.3, Photoshop 2021, 2025 and **2026 (27.8.0)**. 
 
 ### Verification performed (actual results)
 
-| Check                                                         | Result                                                                                                                              |
-| ------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
-| `pnpm install`                                                | Resolved                                                                                                                            |
-| `pnpm typecheck`, `pnpm lint`, `pnpm format:check`            | Pass                                                                                                                                |
-| `pnpm test` (Vitest)                                          | 6/6 pass (env parsing, LLM disabled states)                                                                                         |
-| `pnpm --filter web build`                                     | Pass                                                                                                                                |
-| Vision `pytest`                                               | 6/6 pass (public health, 401 without token, 503 when unconfigured, decode, 422, 413)                                                |
-| Vision `ruff check`, `ruff format --check`, `mypy src`        | Pass                                                                                                                                |
-| Web dev server + vision server started                        | Both served requests                                                                                                                |
-| Backend → vision                                              | `/api/health` returned `vision.reachable: true, authenticated: true`                                                                |
-| Vision live: unauthenticated inspect                          | 401                                                                                                                                 |
-| Vision live: 25 MB upload                                     | 413                                                                                                                                 |
-| `/auth/callback` without a code                               | 307 to `/?auth_error=callback_failed`                                                                                               |
-| **Local** Supabase (`supabase start`, Docker)                 | Migration applied; 3 private buckets and 3 policies present                                                                         |
-| `pnpm --filter web verify:supabase` against local stack       | 10/10 pass: connectivity, private buckets, sign-in, own-folder upload/download, cross-user upload denied, anonymous download denied |
-| **Hosted** Supabase project `Sonder` (`rihciqpkzdzpdsxmyaut`) | Linked; confirmed empty first (no buckets, public tables or users); `supabase db push` applied the migration                        |
-| `pnpm --filter web verify:supabase` against hosted project    | 10/10 pass with the `sb_secret_…` key from `.env.local`; temporary user and file removed afterwards                                 |
-| Web `/api/health` with hosted config                          | `supabase.configured: true`                                                                                                         |
+| Check                                                            | Result                                                                                                                                                                           |
+| ---------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `pnpm install`                                                   | Resolved                                                                                                                                                                         |
+| `pnpm typecheck`, `pnpm lint`, `pnpm format:check`               | Pass                                                                                                                                                                             |
+| `pnpm test` (Vitest)                                             | 6/6 pass (env parsing, LLM disabled states)                                                                                                                                      |
+| `pnpm --filter web build`                                        | Pass                                                                                                                                                                             |
+| Vision `pytest`                                                  | 6/6 pass (public health, 401 without token, 503 when unconfigured, decode, 422, 413)                                                                                             |
+| Vision `ruff check`, `ruff format --check`, `mypy src`           | Pass                                                                                                                                                                             |
+| Web dev server + vision server started                           | Both served requests                                                                                                                                                             |
+| Backend → vision                                                 | `/api/health` returned `vision.reachable: true, authenticated: true`                                                                                                             |
+| Vision live: unauthenticated inspect                             | 401                                                                                                                                                                              |
+| Vision live: 25 MB upload                                        | 413                                                                                                                                                                              |
+| `/auth/callback` without a code                                  | 307 to `/?auth_error=callback_failed`                                                                                                                                            |
+| **Local** Supabase (`supabase start`, Docker)                    | Migration applied; 3 private buckets and 3 policies present                                                                                                                      |
+| `pnpm --filter web verify:supabase` against local stack          | 10/10 pass: connectivity, private buckets, sign-in, own-folder upload/download, cross-user upload denied, anonymous download denied                                              |
+| **Hosted** Supabase project `Sonder` (`rihciqpkzdzpdsxmyaut`)    | Linked; confirmed empty first (no buckets, public tables or users); `supabase db push` applied the migration                                                                     |
+| `pnpm --filter web verify:supabase` against hosted project       | 10/10 pass with the `sb_secret_…` key from `.env.local`; temporary user and file removed afterwards                                                                              |
+| Hosted auth URL configuration (Management API + magic link test) | Site URL `http://localhost:3000`, allow-list `http://localhost:3000/auth/callback`; allow-listed redirect honored, unlisted `https://evil.example.com` fell back to the Site URL |
+| Web `/api/health` with hosted config                             | `supabase.configured: true`                                                                                                                                                      |
 
 ### Not verified
 
-- **Hosted auth URL configuration.** The dashboard's Site URL and redirect allow-list can't be
-  read from the CLI, so they haven't been checked.
 - **Photoshop plugin loading.** UXP Developer Tool isn't installed, so the plugin has not been
   loaded in Photoshop and reading the active document name hasn't run. Also unverified: whether
   UXP allows plain-`http` `fetch` to `localhost` with the declared `network.domains`.
@@ -66,13 +65,10 @@ Supabase CLI 2.75.0, Docker 29.1.3, Photoshop 2021, 2025 and **2026 (27.8.0)**. 
 
 ### Blockers requiring user input
 
-1. **Supabase auth URLs.** In the dashboard, go to Authentication → URL Configuration and set
-   the Site URL to `http://localhost:3000` and the redirect URL to
-   `http://localhost:3000/auth/callback`, if that isn't done already.
-2. **UXP Developer Tool.** Install it from Creative Cloud, load
+1. **UXP Developer Tool.** Install it from Creative Cloud, load
    `connectors/photoshop/plugin/manifest.json` in Photoshop 2026, and confirm the panel shows
    the document name (see `docs/setup.md` §5).
-3. **LLM provider (optional).** Language interpretation stays disabled until a provider and
+2. **LLM provider (optional).** Language interpretation stays disabled until a provider and
    key are supplied. That isn't needed until Phase 8.
 
 ### Known limitations
