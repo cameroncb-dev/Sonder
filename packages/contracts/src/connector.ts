@@ -26,5 +26,10 @@ export const ConnectorManifest = z.object({
   colorModes: z.array(z.string()).optional(),
   runtime: z.record(z.string(), z.string()),
   limitations: z.array(z.string()),
+  /**
+   * Fields of `NativeRef.data` that identify the same element across versions of an asset
+   * (Photoshop: the layer id, which survives renames). Without them, all of `data` is used.
+   */
+  identityFields: z.array(z.string().min(1)).min(1).optional(),
 });
 export type ConnectorManifest = z.infer<typeof ConnectorManifest>;

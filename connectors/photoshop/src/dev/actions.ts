@@ -1,5 +1,8 @@
 import { app, constants, core } from "photoshop";
 
+import { PropertyValue } from "@sonder/contracts";
+
+import { applyProperty } from "../ps/apply";
 import { allLayers } from "../ps/elements";
 import { getFile, getOrCreateFolder, type Folder } from "../ps/files";
 import type { ConnectorRuntime } from "../sync/runtime";
@@ -68,6 +71,24 @@ export function devActions(
         { commandName: "Sonder: e2e edit" },
       );
     },
+    /** Applies one typed property to the named layer of the active document (unsaved). */
+    "set-property": async (command: TriggerCommand) => {
+      const property = PropertyValue.parse(command.property);
+      if (typeof command.layer !== "string") throw new Error("layer required");
+      return core.executeAsModal(
+        async () => {
+          const doc = app.activeDocument;
+          if (!doc) throw new Error("No active document");
+          const layer = allLayers(doc).find((l) => l.name === command.layer);
+          if (!layer) throw new Error(`No layer named ${String(command.layer)}`);
+          await applyProperty(doc, layer, property);
+          return { document: doc.name, layer: layer.name, property };
+        },
+        { commandName: "Sonder: e2e set property" },
+      );
+    },
+    /** The two installed fonts the fixture and checks use (the fixture uses the first). */
+    fonts: async () => pickFonts(),
     "save-active": async () =>
       core.executeAsModal(
         async () => {

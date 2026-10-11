@@ -1,6 +1,6 @@
 import type { ConnectorManifest } from "@sonder/contracts";
 
-export const CONNECTOR_VERSION = "0.2.0";
+export const CONNECTOR_VERSION = "0.3.0";
 export const PSD_MEDIA_TYPE = "image/vnd.adobe.photoshop";
 
 export function photoshopManifest(applicationVersion?: string): ConnectorManifest {
@@ -26,6 +26,7 @@ export function photoshopManifest(applicationVersion?: string): ConnectorManifes
     previewFormats: ["image/png"],
     colorModes: ["RGBColorMode"],
     runtime: { host: "PS>=24.2.0", uxp: "manifest v5" },
+    identityFields: ["layerId"],
     limitations: [
       "Text layers must use one font, size and color throughout (no mixed formatting).",
       "Background colors are supported only on solid-color fill layers.",

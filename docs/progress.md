@@ -1,5 +1,118 @@
 # Progress
 
+## Phase 5 — Selective Combination and Approval
+
+Status: **complete, pending your interactive test.** Every acceptance criterion is verified end
+to end against the hosted project with the real plugin. The combine screen has been
+build-checked but not yet used in a browser. Branch: `phase-5-combine`.
+
+### Completed
+
+| Task                                  | Result                                                                                                                                      |
+| ------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| Merge engine                          | `packages/connector-sdk/src/merge.ts`: three-way, per property, against the shared ancestor; no application assumptions                     |
+| Bind proposals to exact checkpoints   | Each proposal records base, target and source checkpoint ids, the target branch, every choice and the change set                            |
+| Validate supported objects/properties | Engine: connector-declared property types and element editability. Plugin: the change set's shape, then layers and fonts in the document    |
+| Separate editable candidate           | A `createCandidate` job applies the change set to a copy of the target snapshot (never the open document) and verifies Photoshop applied it |
+| Candidate preview                     | Captured with the candidate; the review screen shows target, candidate and source side by side                                              |
+| Record approval of exact candidate    | `approve_proposal` requires the candidate id that was shown and records approver, time, and native and preview digests                      |
+| Finalize as a new checkpoint          | Approval advances the target branch to the candidate (compare-and-swap); its parents are both branch heads                                  |
+| Preserve source checkpoints           | Sources are only read; candidates of unapproved proposals stay out of history                                                               |
+| Handle unsaved work                   | Building never touches the open document. "Open result" reuses the branch switch, which refuses on unsaved or uncaptured changes            |
+
+**Merge rules**, applied per element (matched by connector-declared identity fields;
+Photoshop: layer id) and per property:
+
+- Neither side changed: keep the value.
+- Only the source changed: take it by default; can be excluded.
+- Only the target changed, or both changed identically: already in the target.
+- Both changed differently: a conflict. A candidate can't be made until it's resolved.
+
+When the branches have no single shared ancestor, the user must choose a baseline. Layers
+added or removed on either side are listed but never combined; the result keeps the
+target's layers.
+
+**Permissions:** owners and editors can propose, approve and discard. Reviewers can view.
+(This was my call; it is easy to change.)
+
+### Files and migrations
+
+- Migration `20261014000000_combination_proposals.sql`:
+  - `checkpoints.proposal_item_id`;
+  - `create_combination_proposal` (proposal, item and job in one transaction);
+  - `begin_checkpoint`: candidate parents come from the job, never the plugin;
+  - `finalize_checkpoint`: candidates never move branches;
+  - `track_candidate_job` trigger;
+  - `approve_proposal` and `reject_proposal`.
+- Contracts: `ConnectorManifest.identityFields`. Photoshop connector version 0.3.0 declares
+  `["layerId"]`.
+- API: `assets/:id/combine` (preview), `assets/:id/proposals` (list, create),
+  `proposals/:id/approve`, `proposals/:id/reject`. The database error `55000` maps to
+  409 `STALE`.
+- UI: `combine-view.tsx` (choose branches, a property table with per-row choices and
+  conflicts, review of three previews, approve/discard, open result) and a "Combine"
+  section in the inspector.
+- Plugin: the `createCandidate` job handler; a shared upload path for captures and
+  candidates; per-file **baselines** (see Problems found); dev actions `set-property` and
+  `fonts`.
+
+### Verification performed (actual results)
+
+| Check                                                     | Result                                                                                                                                                                                                       |
+| --------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `pnpm typecheck`, `lint`, `test`, `format:check`, `build` | Pass. Merge engine unit tests: 13 new (SDK 20/20)                                                                                                                                                            |
+| `test:integration` (local)                                | 33/33 (7 new: binding and job, reviewer/moved-branch/cross-asset refusal, candidate parents without moving branches, exact-candidate approval, finalize and record, stale approval and discard, failed jobs) |
+| `e2e:connector` (hosted + Photoshop 27.8.0)               | **59/59** (16 new, listed below)                                                                                                                                                                             |
+
+New end-to-end checks:
+
+- Two branches were made from one checkpoint:
+  - `background`: background fill to `#8B1E3F` and headline color to gold;
+  - `alt`: headline font to Georgia and headline color to green.
+- The comparison found the shared ancestor and classified font (target), fill (source) and
+  headline color (conflict).
+- The unresolved conflict was refused (422).
+- With "keep alt's color", Photoshop built the candidate from a copy, and the proposal became
+  ready.
+- The candidate has alt's font, the background branch's fill and the chosen green. The
+  headline text and size, and the whole body layer, equal the base.
+- The candidate was hidden from history until approval. Approval made it alt's head, with
+  both branch heads as parents.
+- The stored native and preview files match the digests recorded at approval, and those
+  match the reviewed candidate.
+- All source checkpoints are byte-for-byte unchanged. A second approval returns 409.
+- After approval, the open working copy isn't flagged as uncaptured. "Open result" opens the
+  candidate without force and reports no changes.
+- Combining the same branches again returns `NOTHING_TO_COMBINE`.
+
+### Problems found and fixed during development
+
+- **False "uncaptured changes" after approval:** both the uncaptured indicator and the
+  branch-switch safety check compared the open file with the _branch head_. Approval moves
+  the head ahead of the open working copy, so opening the result would have been refused.
+  The plugin now records each file's **baseline** (the checkpoint it was opened from or last
+  captured as) and compares against that, falling back to the head.
+- **Unsafe foreign key:** an `on delete set null` from checkpoints to proposal items would
+  have tried to update immutable finalized checkpoints when a proposal was deleted. Changed
+  to a plain reference (project deletion removes both together).
+
+### Known limitations
+
+- Only properties are combined. Added or removed layers, pixels and mixed-format text are
+  preserved from the target but never merged.
+- A proposal combines two branches of **one** asset. Coordinated updates across assets are
+  Phase 6.
+- Each change of choices creates a new proposal and candidate; old ones remain listed (discard
+  them).
+- After approval the open working copy is behind its branch until "Open result". The card
+  doesn't show "behind" yet.
+- From Phase 4: the original file isn't recognised after switching branches (decision
+  pending).
+
+### Recommended next phase
+
+Phase 6 (shared themes and project directions).
+
 ## Phase 4 — Canvas and Branching
 
 Status: **complete.** All acceptance criteria are verified end to end against the hosted

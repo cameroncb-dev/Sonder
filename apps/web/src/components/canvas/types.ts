@@ -117,3 +117,85 @@ export function formatValue(value: unknown): string {
     return String((value as { postScriptName: string }).postScriptName);
   return String(value);
 }
+
+export type Side = "target" | "source";
+
+export interface CombineRow {
+  id: string;
+  key: string;
+  kind: string;
+  name: string;
+  property: string;
+  base?: unknown;
+  target?: unknown;
+  source?: unknown;
+  status: "unchanged" | "target" | "source" | "both_same" | "conflict";
+  supported: boolean;
+  reason?: string;
+  defaultSide: Side | null;
+}
+
+interface CheckpointSummary {
+  id: string;
+  message: string | null;
+  createdAt: string;
+}
+
+export interface Combination {
+  base: CheckpointSummary & { chosen: boolean };
+  target: { branchId: string; branchName: string; checkpoint: CheckpointSummary };
+  source: { branchId: string; branchName: string; checkpoint: CheckpointSummary };
+  rows: CombineRow[];
+  structural: Array<{ key: string; name: string; change: string }>;
+}
+
+export interface Proposal {
+  id: string;
+  status:
+    | "draft"
+    | "preparing"
+    | "ready"
+    | "approved"
+    | "rejected"
+    | "finalized"
+    | "partially_failed"
+    | "failed";
+  request: {
+    targetBranchId: string;
+    targetBranchName: string;
+    targetCheckpointId: string;
+    sourceBranchId: string;
+    sourceBranchName: string;
+    sourceCheckpointId: string;
+    baseCheckpointId: string;
+    changeSet: {
+      changes: Array<{ elementId: string; property: { type: string; value: unknown } }>;
+    };
+  };
+  createdAt: string;
+  approvedBy: string | null;
+  approvedAt: string | null;
+  item: {
+    id: string;
+    status: string;
+    outcome: { error?: Job["error"]; approvedCandidateId?: string } | null;
+  };
+  candidate: {
+    id: string;
+    previewUrl: string | null;
+    previewDigest: string;
+    elements: Element[];
+  } | null;
+}
+
+/** Readable name for a proposal's state. */
+export const PROPOSAL_STATUS: Record<Proposal["status"], string> = {
+  draft: "Draft",
+  preparing: "Building candidate…",
+  ready: "Ready for review",
+  approved: "Approved",
+  rejected: "Discarded",
+  finalized: "Approved and finalized",
+  partially_failed: "Partly failed",
+  failed: "Failed",
+};

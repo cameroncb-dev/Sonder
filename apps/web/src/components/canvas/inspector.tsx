@@ -4,14 +4,24 @@ import { useEffect, useRef, useState } from "react";
 
 import { api, ApiClientError } from "@/lib/api-client";
 
+import { CombineView } from "./combine-view";
 import { CompareView } from "./compare-view";
 import { changeLabel } from "./nodes";
 import { HistoryGraph } from "./history-graph";
-import { APPLICATION_LABELS, type CanvasAsset, formatValue, type History, type Job } from "./types";
+import {
+  APPLICATION_LABELS,
+  type CanvasAsset,
+  formatValue,
+  type History,
+  type Job,
+  type Proposal,
+  PROPOSAL_STATUS,
+} from "./types";
 
 const JOB_LABELS: Record<string, string> = {
   captureCheckpoint: "Capture",
   openCheckpoint: "Switch branch",
+  createCandidate: "Build combination",
 };
 
 function jobSummary(job: Job): string {
@@ -42,6 +52,9 @@ export function Inspector({
   const [selected, setSelected] = useState<string | null>(null);
   const [compare, setCompare] = useState<string[]>([]);
   const [showCompare, setShowCompare] = useState(false);
+  const [proposals, setProposals] = useState<Proposal[]>([]);
+  /** Open combine view: "new" for a fresh combination, or the proposal being reviewed. */
+  const [combining, setCombining] = useState<"new" | Proposal | null>(null);
   const [branchName, setBranchName] = useState("");
   const [message, setMessage] = useState("");
   const [notice, setNotice] = useState<string | null>(null);
@@ -62,6 +75,17 @@ export function Inspector({
       cancelled = true;
     };
   }, [historyUrl, reloadKey]);
+
+  const proposalsUrl = `/api/projects/${projectId}/assets/${asset.id}/proposals`;
+  useEffect(() => {
+    let cancelled = false;
+    api<{ proposals: Proposal[] }>("GET", proposalsUrl)
+      .then((data) => !cancelled && setProposals(data.proposals))
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [proposalsUrl, reloadKey]);
 
   // Poll while jobs are pending so captures and branch switches appear without a reload.
   const pending =
@@ -107,6 +131,8 @@ export function Inspector({
   const canCapture =
     canEdit && !busy && asset.connector.online && operations.includes("captureCheckpoint");
   const canSwitch = canEdit && !busy && operations.includes("openCheckpoint");
+  const canCombine =
+    canEdit && history.branches.length >= 2 && operations.includes("createCandidate");
   const checkpoint = history.checkpoints.find((c) => c.id === selected) ?? null;
   const compared = compare
     .map((id) => history.checkpoints.find((c) => c.id === id))
@@ -207,6 +233,48 @@ export function Inspector({
             <li className="text-xs text-zinc-500">The first capture creates the main branch.</li>
           )}
         </ul>
+      </section>
+
+      <section className="flex flex-col gap-2">
+        <div className="flex items-center justify-between">
+          <h3 className="text-xs font-semibold uppercase tracking-wide text-zinc-500">Combine</h3>
+          <button
+            className="rounded border border-zinc-300 px-2 py-0.5 text-xs disabled:opacity-40 dark:border-zinc-700"
+            disabled={!canCombine}
+            title={
+              canCombine
+                ? "Take selected changes from one branch into another"
+                : history.branches.length < 2
+                  ? "Create a second branch first"
+                  : "The connector for this asset can't build candidates"
+            }
+            onClick={() => setCombining("new")}
+          >
+            Combine branches…
+          </button>
+        </div>
+        {proposals.slice(0, 4).map((p) => (
+          <button
+            key={p.id}
+            className="flex items-center justify-between gap-2 rounded px-1 py-0.5 text-left text-xs hover:bg-zinc-100 dark:hover:bg-zinc-800"
+            onClick={() => setCombining(p)}
+          >
+            <span className="truncate">
+              {p.request.sourceBranchName} → {p.request.targetBranchName}
+            </span>
+            <span
+              className={`shrink-0 ${
+                p.status === "ready"
+                  ? "text-blue-600 dark:text-blue-400"
+                  : p.status === "failed"
+                    ? "text-red-600"
+                    : "text-zinc-500"
+              }`}
+            >
+              {PROPOSAL_STATUS[p.status]}
+            </span>
+          </button>
+        ))}
       </section>
 
       {history.jobs.length > 0 && (
@@ -332,6 +400,26 @@ export function Inspector({
       )}
 
       {notice && <p className="text-xs text-zinc-600 dark:text-zinc-400">{notice}</p>}
+      {combining && (
+        <CombineView
+          projectId={projectId}
+          assetId={asset.id}
+          branches={history.branches}
+          checkpoints={history.checkpoints}
+          activeBranchId={history.asset.activeBranchId}
+          canEdit={canEdit}
+          canSwitch={canSwitch}
+          {...(combining === "new" ? {} : { proposal: combining })}
+          onClose={() => {
+            setCombining(null);
+            setReloadKey((k) => k + 1);
+          }}
+          onChanged={() => {
+            setReloadKey((k) => k + 1);
+            onChanged();
+          }}
+        />
+      )}
       {showCompare && compared.length === 2 && (
         <CompareView
           left={compared[0]!}

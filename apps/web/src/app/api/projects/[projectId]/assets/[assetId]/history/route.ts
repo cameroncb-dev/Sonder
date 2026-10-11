@@ -9,6 +9,7 @@ interface CheckpointRow {
   created_by: string | null;
   preview_path: string;
   native_bytes: number;
+  proposal_item_id: string | null;
   manifest: { elements?: unknown[]; document?: unknown; applicationVersion?: string };
 }
 
@@ -27,14 +28,34 @@ export const GET = handler(
     ]);
     const asset = await requireAsset(supabase, projectId, assetId);
 
-    const checkpoints = unwrap(
+    const all = unwrap(
       await supabase
         .from("checkpoints")
-        .select("id,message,created_at,created_by,preview_path,native_bytes,manifest")
+        .select(
+          "id,message,created_at,created_by,preview_path,native_bytes,proposal_item_id,manifest",
+        )
         .eq("asset_id", assetId)
         .eq("status", "finalized")
         .order("created_at"),
     ) as CheckpointRow[];
+    // Combination candidates join history only once their proposal is approved.
+    const itemIds = all.map((c) => c.proposal_item_id).filter((id): id is string => !!id);
+    const finalizedItems = new Set(
+      itemIds.length
+        ? (
+            unwrap(
+              await supabase
+                .from("proposal_items")
+                .select("id")
+                .in("id", itemIds)
+                .eq("status", "finalized"),
+            ) as Array<{ id: string }>
+          ).map((i) => i.id)
+        : [],
+    );
+    const checkpoints = all.filter(
+      (c) => !c.proposal_item_id || finalizedItems.has(c.proposal_item_id),
+    );
     const parents = unwrap(
       await supabase
         .from("checkpoint_parents")
