@@ -1,8 +1,32 @@
 @import "tailwindcss";
 
-:root {
-  --background: #ffffff;
-  --foreground: #171717;
+/* Sonder is always dark: `dark:` styles apply everywhere, not only with a dark system theme. */
+@custom-variant dark (&:where(.dark, .dark *));
+
+@theme {
+  /* Neutral greys tinted toward the logo's deep navy, so every existing panel picks it up. */
+  --color-zinc-50: #f5f7fb;
+  --color-zinc-100: #e9edf5;
+  --color-zinc-200: #d3d9e6;
+  --color-zinc-300: #b3bccf;
+  --color-zinc-400: #8b95ad;
+  --color-zinc-500: #67718a;
+  --color-zinc-600: #4a5470;
+  --color-zinc-700: #2c3550;
+  --color-zinc-800: #1b2238;
+  --color-zinc-900: #111729;
+  --color-zinc-950: #0a0f1d;
+
+  /* Logo palette. */
+  --color-ink: #070b16;
+  --color-panel: #0e1424;
+  --color-cyan: #22d3ee;
+  --color-electric: #3b6bff;
+  --color-violet: #8b5cf6;
+  --color-magenta: #e040fb;
+  --color-hotpink: #ff3d8b;
+  --color-tangerine: #ff8a3d;
+  --color-gold: #ffc53d;
 }
 
 @theme inline {
@@ -12,15 +36,239 @@
   --font-mono: var(--font-geist-mono);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+:root {
+  --background: #070b16;
+  --foreground: #e9edf5;
+  --sonder-gradient: linear-gradient(
+    100deg,
+    #22d3ee 0%,
+    #3b6bff 25%,
+    #8b5cf6 45%,
+    #e040fb 62%,
+    #ff3d8b 75%,
+    #ff8a3d 88%,
+    #ffc53d 100%
+  );
+  color-scheme: dark;
 }
 
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: var(--font-geist-sans), system-ui, sans-serif;
+}
+
+/* Brand gradient helpers. */
+@utility text-sonder {
+  background-image: var(--sonder-gradient);
+  background-clip: text;
+  color: transparent;
+}
+@utility bg-sonder {
+  background-image: var(--sonder-gradient);
+}
+
+/* Primary button: rounded, gradient, soft glow on hover. */
+@utility btn-sonder {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  border-radius: 9999px;
+  padding: 0.6rem 1.25rem;
+  font-weight: 600;
+  font-size: 0.875rem;
+  color: #fff;
+  background-image: linear-gradient(100deg, #3b6bff, #8b5cf6 45%, #e040fb 75%, #ff3d8b);
+  background-size: 160% 100%;
+  background-position: 0% 0%;
+  box-shadow: 0 0 0 1px rgb(255 255 255 / 0.08) inset;
+  transition:
+    background-position 0.4s ease,
+    box-shadow 0.25s ease,
+    transform 0.15s ease;
+  &:hover {
+    background-position: 100% 0%;
+    box-shadow:
+      0 0 0 1px rgb(255 255 255 / 0.15) inset,
+      0 8px 30px -6px rgb(224 64 251 / 0.55),
+      0 4px 18px -8px rgb(34 211 238 / 0.6);
+  }
+  &:active {
+    transform: translateY(1px);
+  }
+  &:disabled {
+    opacity: 0.5;
+    box-shadow: none;
+  }
+  &:focus-visible {
+    outline: 2px solid #22d3ee;
+    outline-offset: 3px;
+  }
+}
+
+/* Secondary button: glassy outline. */
+@utility btn-ghost {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  border-radius: 9999px;
+  padding: 0.6rem 1.25rem;
+  font-weight: 500;
+  font-size: 0.875rem;
+  color: #e9edf5;
+  background: rgb(255 255 255 / 0.04);
+  border: 1px solid rgb(255 255 255 / 0.12);
+  transition:
+    background 0.2s ease,
+    border-color 0.2s ease;
+  &:hover {
+    background: rgb(255 255 255 / 0.08);
+    border-color: rgb(255 255 255 / 0.25);
+  }
+  &:focus-visible {
+    outline: 2px solid #22d3ee;
+    outline-offset: 3px;
+  }
+}
+
+/* Text input on dark surfaces. */
+@utility field {
+  width: 100%;
+  border-radius: 0.75rem;
+  border: 1px solid rgb(255 255 255 / 0.1);
+  background: rgb(255 255 255 / 0.04);
+  padding: 0.7rem 0.9rem;
+  font-size: 0.9rem;
+  color: #e9edf5;
+  transition:
+    border-color 0.2s ease,
+    box-shadow 0.2s ease,
+    background 0.2s ease;
+  &::placeholder {
+    color: #67718a;
+  }
+  &:hover {
+    border-color: rgb(255 255 255 / 0.2);
+  }
+  &:focus {
+    outline: none;
+    border-color: #3b6bff;
+    background: rgb(255 255 255 / 0.06);
+    box-shadow: 0 0 0 4px rgb(59 107 255 / 0.25);
+  }
+}
+
+/* Soft blurred color blobs behind hero sections. */
+@utility glow-field {
+  background:
+    radial-gradient(40rem 28rem at 15% 10%, rgb(34 211 238 / 0.16), transparent 60%),
+    radial-gradient(36rem 30rem at 85% 0%, rgb(224 64 251 / 0.16), transparent 60%),
+    radial-gradient(40rem 30rem at 70% 90%, rgb(255 138 61 / 0.12), transparent 60%),
+    radial-gradient(30rem 24rem at 20% 95%, rgb(59 107 255 / 0.14), transparent 60%);
+}
+
+/* Dotted canvas texture. */
+@utility dot-grid {
+  background-image: radial-gradient(rgb(255 255 255 / 0.08) 1px, transparent 1px);
+  background-size: 22px 22px;
+}
+
+/* A card whose border lights up with the brand gradient. */
+@utility gradient-border {
+  position: relative;
+  border-radius: 1.25rem;
+  background:
+    linear-gradient(#0e1424, #0e1424) padding-box,
+    linear-gradient(140deg, rgb(255 255 255 / 0.1), rgb(255 255 255 / 0.04)) border-box;
+  border: 1px solid transparent;
+  transition:
+    background 0.3s ease,
+    transform 0.2s ease,
+    box-shadow 0.3s ease;
+  &:hover {
+    background:
+      linear-gradient(#111a2e, #111a2e) padding-box,
+      var(--sonder-gradient) border-box;
+    box-shadow: 0 18px 50px -20px rgb(139 92 246 / 0.45);
+  }
+}
+
+@keyframes sonder-spin {
+  to {
+    --sonder-angle: 360deg;
+  }
+}
+@property --sonder-angle {
+  syntax: "<angle>";
+  inherits: false;
+  initial-value: 0deg;
+}
+
+/* Slowly rotating gradient ring around a card (login). */
+@utility animated-ring {
+  position: relative;
+  border-radius: 1.5rem;
+  border: 1px solid transparent;
+  background:
+    linear-gradient(#0c1222, #0c1222) padding-box,
+    conic-gradient(
+        from var(--sonder-angle),
+        #22d3ee,
+        #3b6bff,
+        #8b5cf6,
+        #e040fb,
+        #ff3d8b,
+        #ff8a3d,
+        #ffc53d,
+        #22d3ee
+      )
+      border-box;
+  animation: sonder-spin 8s linear infinite;
+}
+
+@keyframes sonder-float {
+  0%,
+  100% {
+    transform: translateY(0) rotate(0deg);
+  }
+  50% {
+    transform: translateY(-14px) rotate(2deg);
+  }
+}
+@utility drift {
+  animation: sonder-float 7s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* React Flow, matched to the workspace. */
+.react-flow.dark {
+  --xy-background-color: transparent;
+  --xy-controls-button-background-color: #111729;
+  --xy-controls-button-background-color-hover: #1b2238;
+  --xy-controls-button-border-color: rgb(255 255 255 / 0.06);
+  --xy-minimap-background-color: #0e1424;
+  --xy-edge-stroke: #67718a;
+  --xy-node-border-radius: 12px;
+}
+
+@keyframes fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
 }

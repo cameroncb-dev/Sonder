@@ -55,8 +55,9 @@ troubleshooting.
 ### 5. Connect Photoshop
 
 1. In the Sonder panel, click **Connect**. It shows a code such as `ABCD-2345`.
-2. Open <http://localhost:3000/pair>, enter the code, and click **Approve**. The panel changes
-   to "Connected as …". The connection lasts 12 hours.
+2. Open <http://localhost:3000/pair> (the **Connect** guide, opened at the code step), enter the
+   code, and click **Approve**. The panel changes to "Connected as …". The connection is
+   remembered for 30 days of use, so you normally pair once.
 
 ### 6. Link a document
 

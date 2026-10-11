@@ -1,5 +1,49 @@
 # Progress
 
+## UI refresh — Sonder brand and creative workspace
+
+Status: **done, awaiting review.** Branch: `ui-refresh` (from `phase-8-ai-assistant`, so the
+AI controls are restyled too). A visual refresh only: no API, database or plugin changes.
+
+- **Brand.** The logo from `Sonder Logo.png` was cropped to its tile with transparent rounded
+  corners (`public/brand/sonder-logo.png`, plus `app/icon.png` as the favicon). The app is
+  always dark. The grey palette is tinted navy, so existing panels and dialogs match. Logo
+  colors (cyan, electric blue, violet, magenta, pink, orange, gold) are Tailwind colors, and
+  shared styles (`btn-sonder`, `btn-ghost`, `field`, `gradient-border`, `dot-grid`) live in
+  `globals.css`. Animations respect reduced motion.
+- **Home** (`/`). Nav: Projects, Connect, Login. A hero ("A visual workspace for creative
+  direction.") with an interactive board illustration: it follows the pointer, and hovering a
+  branch highlights its line. Below: feature cards and a call to connect.
+- **Connect** (`/connect`). The "Connect Your Workspace" hero, an eight-step guide (click any
+  step; progress bar; back and next) with the pairing form built into step 5, and "Good to know"
+  notes (approval, checkpoints, offline behaviour). `/pair`, where the plugin sends people, shows
+  the same guide opened at step 5.
+- **Login.** A centered card with a slowly rotating gradient ring, the logo, focus glows on the
+  inputs and a gradient sign-in button.
+- **Projects.** A large left-aligned heading, a rounded gradient **New Project** button that
+  opens an inline form, cards with per-project gradient covers, loading skeletons, and a visual
+  empty state.
+- **Workspace.** Layout inspired by a dark creative workspace (no third-party branding).
+  - Top bar: menu, Sonder logo, project title and role, zoom level (click to fit), Organize,
+    **Share** and an account menu with sign-out.
+  - Share copies the project link. Owners can also add a teammate by email and role, using the
+    existing members API.
+  - Floating left tool rail: select, notes, text, sections, themes, directions, add reference,
+    and all tools. Each tool opens its options in a flyout; "all tools" shows the earlier
+    accordion.
+  - Floating right utility rail: zoom in and out, fit, overview map, Organize with AI, help.
+  - Dotted canvas; fit-to-view leaves room for the rails.
+
+Verified:
+
+- Lint, typecheck, formatting and unit tests (30/30) pass, and the production build succeeds.
+- Screenshots in headless Chrome:
+  - home, Connect and login at 1440 px and 390 px;
+  - projects and the workspace with tool flyouts and the share dialog, using a throwaway test
+    user and projects that were deleted afterwards.
+- **Not yet done:** a click-through by a person, and the inspector, theme and direction panels
+  with real documents. They inherit the new palette but weren't restyled individually.
+
 ## Phase 8 (re-scoped) — AI Assistant with Gemini
 
 Status: **in progress.** Branch: `phase-8-ai-assistant`. The user may drop it if it can't be

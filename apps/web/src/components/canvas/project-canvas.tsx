@@ -4,7 +4,7 @@ import "@xyflow/react/dist/style.css";
 
 import {
   Background,
-  Controls,
+  BackgroundVariant,
   type Edge,
   MiniMap,
   type Node,
@@ -15,8 +15,7 @@ import {
   useNodesState,
   useReactFlow,
 } from "@xyflow/react";
-import Link from "next/link";
-import { useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { api, ApiClientError } from "@/lib/api-client";
 import { NoteContent, SECTION_SIZE, SectionContent, TextContent } from "@/lib/canvas-style";
@@ -26,9 +25,10 @@ import { Inspector } from "./inspector";
 import { OrganizeDialog, type OrganizePlan } from "./organize-dialog";
 import { DirectionPanel, DirectionPicker } from "./direction-panel";
 import { ThemePanel } from "./theme-panel";
-import { type PlacingTool, Toolbox, WaffleButton } from "./toolbox";
+import { type PlacingTool, Toolbox, type ToolPanel } from "./toolbox";
 import { nodeTypes } from "./nodes";
 import type { CanvasAsset, CanvasData, CanvasItem } from "./types";
+import { AppBar, Icon, ShareDialog, ToolRail, UtilityRail } from "./workspace-chrome";
 
 const STATUS_REFRESH_MS = 15_000;
 /** Matches the `references` storage bucket's file size limit. */
@@ -37,21 +37,8 @@ const REFERENCE_TYPES = ["image/png", "image/jpeg", "image/webp"];
 const megabytes = (bytes: number) => `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 /** Dashed to read as an organising link, not version history. */
 const EDGE_STYLE = { strokeDasharray: "6 4", strokeWidth: 2 };
-
-const DARK_QUERY = "(prefers-color-scheme: dark)";
-
-/** System theme. The server snapshot is "light"; React re-renders after hydration without a mismatch. */
-function useColorMode(): "light" | "dark" {
-  return useSyncExternalStore(
-    (onChange) => {
-      const query = window.matchMedia(DARK_QUERY);
-      query.addEventListener("change", onChange);
-      return () => query.removeEventListener("change", onChange);
-    },
-    () => (window.matchMedia(DARK_QUERY).matches ? "dark" : "light"),
-    () => "light",
-  );
-}
+/** Keeps fitted cards clear of the floating tool rails. */
+const FIT_PADDING = { top: "40px", bottom: "40px", left: "96px", right: "88px" } as const;
 
 interface CardHandlers {
   save: (itemId: string, content: Record<string, unknown>) => void;
@@ -190,7 +177,10 @@ function CanvasInner({ projectId }: { projectId: string }) {
   const [uploadError, setUploadError] = useState<{ title: string; detail: string } | null>(null);
   /** Card style chosen in the toolbox, waiting for a click on the canvas. */
   const [placing, setPlacing] = useState<PlacingTool | null>(null);
-  const [toolsOpen, setToolsOpen] = useState(true);
+  /** Tool flyout opened from the rail: one tool, every tool, or none. */
+  const [toolPanel, setToolPanel] = useState<ToolPanel | "all" | null>(null);
+  const [minimap, setMinimap] = useState(false);
+  const [sharing, setSharing] = useState(false);
   /** A card just placed, whose text should take focus once it renders. */
   const focusId = useRef<string | null>(null);
   /** Cards inside a section being dragged, with their positions when the drag began. */
@@ -207,7 +197,6 @@ function CanvasInner({ projectId }: { projectId: string }) {
   const fitPending = useRef(true);
   const fileInput = useRef<HTMLInputElement>(null);
   const flow = useReactFlow();
-  const colorMode = useColorMode();
   const base = `/api/projects/${projectId}`;
   const reload = () => setReloadKey((k) => k + 1);
 
@@ -264,7 +253,7 @@ function CanvasInner({ projectId }: { projectId: string }) {
         if (fitPending.current) {
           fitPending.current = false;
           // Wait for the new nodes to render before framing them.
-          requestAnimationFrame(() => void flow.fitView({ padding: 0.2, duration: 200 }));
+          requestAnimationFrame(() => void flow.fitView({ padding: FIT_PADDING, duration: 200 }));
         }
       })
       .catch((e) => !cancelled && report(e));
@@ -652,25 +641,6 @@ function CanvasInner({ projectId }: { projectId: string }) {
     return () => window.removeEventListener("keydown", cancel);
   }, [placing]);
 
-  // The toolbox's visibility is remembered in this browser.
-  useEffect(() => {
-    try {
-      // eslint-disable-next-line react-hooks/set-state-in-effect -- one-time restore from storage
-      setToolsOpen(window.localStorage.getItem("sonder.toolsOpen") !== "false");
-    } catch {
-      // Storage unavailable: keep the default.
-    }
-  }, []);
-  const toggleTools = () =>
-    setToolsOpen((open) => {
-      try {
-        window.localStorage.setItem("sonder.toolsOpen", String(!open));
-      } catch {
-        // Ignore: the choice lasts for this visit.
-      }
-      return !open;
-    });
-
   async function uploadReference(file: File) {
     // Checked before uploading, so a too-large image is reported at once.
     if (file.size > MAX_REFERENCE_BYTES)
@@ -710,73 +680,98 @@ function CanvasInner({ projectId }: { projectId: string }) {
   const canEdit = data?.role !== "reviewer";
 
   return (
-    <div className="flex h-dvh flex-col">
-      <header className="flex flex-wrap items-center justify-between gap-2 border-b border-zinc-200 px-4 py-2 dark:border-zinc-800">
-        <div className="flex items-center gap-3">
-          {canEdit && <WaffleButton open={toolsOpen} onToggle={toggleTools} />}
-          <Link href="/projects" className="text-sm text-zinc-500 hover:underline">
-            Projects
-          </Link>
-          <h1 className="font-semibold">{data?.project.name ?? "…"}</h1>
-          {data && (
-            <span className="rounded bg-zinc-100 px-1.5 py-0.5 text-xs text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300">
-              {data.role}
-            </span>
-          )}
-        </div>
-        <div className="flex items-center gap-2 text-sm">
-          {notice && (
-            <span className="max-w-md truncate text-xs text-amber-700 dark:text-amber-400">
-              {notice}
-            </span>
-          )}
-          {canEdit && organizeUndo && (
-            <button
-              className="rounded border border-zinc-300 px-3 py-1 dark:border-zinc-700"
-              onClick={() => void undoOrganize()}
-            >
-              Undo organize
-            </button>
-          )}
-          {canEdit && aiEnabled && (
-            <button
-              className="rounded border border-zinc-300 px-3 py-1 dark:border-zinc-700"
-              onClick={() => setOrganizing(true)}
-              title="Let Gemini group your cards into sections"
-            >
-              ✦ Organize
-            </button>
-          )}
-          {canEdit && (
-            <>
-              <input
-                ref={fileInput}
-                type="file"
-                accept="image/png,image/jpeg,image/webp"
-                hidden
-                onChange={(e) => {
-                  const file = e.target.files?.[0];
-                  if (file) void uploadReference(file);
-                  e.target.value = "";
-                }}
-              />
-            </>
-          )}
-        </div>
-      </header>
+    <div className="flex h-dvh flex-col bg-ink">
+      <AppBar
+        title={data?.project.name ?? "…"}
+        role={data?.role}
+        notice={notice}
+        onFit={() => void flow.fitView({ padding: FIT_PADDING, duration: 300 })}
+        onShare={() => setSharing(true)}
+        actions={
+          <>
+            {canEdit && organizeUndo && (
+              <button className="btn-ghost !px-3 !py-1.5" onClick={() => void undoOrganize()}>
+                <Icon name="undo" className="h-4 w-4" />
+                Undo organize
+              </button>
+            )}
+            {canEdit && aiEnabled && (
+              <button
+                className="btn-ghost hidden !px-3 !py-1.5 sm:inline-flex"
+                onClick={() => setOrganizing(true)}
+                title="Let Gemini group your cards into sections"
+              >
+                <Icon name="sparkle" className="h-4 w-4 text-gold" />
+                Organize
+              </button>
+            )}
+          </>
+        }
+      />
+      {canEdit && (
+        <input
+          ref={fileInput}
+          type="file"
+          accept="image/png,image/jpeg,image/webp"
+          hidden
+          onChange={(e) => {
+            const file = e.target.files?.[0];
+            if (file) void uploadReference(file);
+            e.target.value = "";
+          }}
+        />
+      )}
       <div className="flex min-h-0 flex-1">
-        {canEdit && toolsOpen && (
-          <Toolbox
-            placing={placing}
-            onPlace={setPlacing}
-            onCancel={() => setPlacing(null)}
-            onAddReference={() => fileInput.current?.click()}
-            onChooseDirection={setChoosingDirection}
-          />
-        )}
         <div
-          className={`min-w-0 flex-1 ${placing ? "[&_.react-flow__pane]:!cursor-crosshair" : ""}`}
+          className={`relative min-w-0 flex-1 ${placing ? "[&_.react-flow__pane]:!cursor-crosshair" : ""}`}
         >
+          {canEdit && (
+            <div className="pointer-events-none absolute inset-y-3 left-3 z-20 flex items-start gap-2">
+              <div className="pointer-events-auto">
+                <ToolRail
+                  panel={toolPanel}
+                  onPanel={setToolPanel}
+                  placingKind={placing?.kind ?? null}
+                  onSelectTool={() => {
+                    setPlacing(null);
+                    setToolPanel(null);
+                  }}
+                  onAddReference={() => fileInput.current?.click()}
+                />
+              </div>
+              {toolPanel && (
+                <div className="pointer-events-auto flex max-h-full">
+                  <Toolbox
+                    only={toolPanel === "all" ? undefined : toolPanel}
+                    onClose={() => setToolPanel(null)}
+                    placing={placing}
+                    onPlace={setPlacing}
+                    onCancel={() => setPlacing(null)}
+                    onAddReference={() => fileInput.current?.click()}
+                    onChooseDirection={setChoosingDirection}
+                  />
+                </div>
+              )}
+            </div>
+          )}
+          <div className="absolute right-3 top-3 z-20">
+            <UtilityRail
+              onZoomIn={() => void flow.zoomIn({ duration: 200 })}
+              onZoomOut={() => void flow.zoomOut({ duration: 200 })}
+              onFit={() => void flow.fitView({ padding: FIT_PADDING, duration: 300 })}
+              minimap={minimap}
+              onToggleMinimap={() => setMinimap((m) => !m)}
+              {...(canEdit && aiEnabled ? { onOrganize: () => setOrganizing(true) } : {})}
+            />
+          </div>
+          {placing && (
+            <div className="pointer-events-none absolute inset-x-0 bottom-5 z-20 flex justify-center">
+              <div className="flex items-center gap-2 rounded-full border border-white/10 bg-zinc-900/95 px-4 py-2 text-xs text-zinc-200 shadow-xl backdrop-blur">
+                <span className="bg-sonder h-2 w-2 rounded-full" />
+                Click the canvas to place · Esc to cancel
+              </div>
+            </div>
+          )}
           <ReactFlow
             nodes={nodes}
             edges={edges}
@@ -815,12 +810,26 @@ function CanvasInner({ projectId }: { projectId: string }) {
               setSelectedDirection(null);
             }}
             nodesConnectable={canEdit}
-            colorMode={colorMode}
+            colorMode="dark"
             fitView
+            fitViewOptions={{ padding: FIT_PADDING }}
           >
-            <Background />
-            <Controls />
-            <MiniMap pannable zoomable />
+            <Background
+              variant={BackgroundVariant.Dots}
+              gap={22}
+              size={1.4}
+              color="rgba(255,255,255,0.2)"
+            />
+            {minimap && (
+              <MiniMap
+                pannable
+                zoomable
+                position="bottom-right"
+                className="!rounded-xl !border !border-white/10 !bg-zinc-900/90"
+                maskColor="rgba(7,11,22,0.7)"
+                nodeColor="#3b6bff"
+              />
+            )}
           </ReactFlow>
         </div>
         {selectedDirection && (
@@ -854,6 +863,14 @@ function CanvasInner({ projectId }: { projectId: string }) {
           />
         )}
       </div>
+      {sharing && data && (
+        <ShareDialog
+          projectId={projectId}
+          projectName={data.project.name}
+          isOwner={data.role === "owner"}
+          onClose={() => setSharing(false)}
+        />
+      )}
       {organizing && (
         <OrganizeDialog
           projectId={projectId}
