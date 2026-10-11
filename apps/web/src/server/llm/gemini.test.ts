@@ -4,7 +4,7 @@ import { z } from "zod";
 import { parseServerEnv } from "@/lib/env";
 
 import { llmStatus } from ".";
-import { geminiInterpreter } from "./gemini";
+import { FALLBACK_GEMINI_MODEL, geminiInterpreter } from "./gemini";
 
 const reply = (text: string, status = 200) =>
   new Response(
@@ -59,6 +59,19 @@ describe("gemini adapter", () => {
       reason: "provider_error",
       message: "API key not valid",
     });
+  });
+
+  it("retries overload errors, then falls back to another model", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockImplementation(async (url: string) =>
+        url.includes("/m:") ? reply("high demand", 503) : reply('{"ideas":["Calm"]}'),
+      );
+    const result = await geminiInterpreter("k", "m", fetchMock, [0, 0]).interpret(request);
+    expect(result).toEqual({ ok: true, value: { ideas: ["Calm"] } });
+    const urls = fetchMock.mock.calls.map(([url]) => String(url));
+    expect(urls.filter((u) => u.includes("/m:"))).toHaveLength(3);
+    expect(urls.at(-1)).toContain(`/${FALLBACK_GEMINI_MODEL}:`);
   });
 
   it("is enabled only with a key", () => {
