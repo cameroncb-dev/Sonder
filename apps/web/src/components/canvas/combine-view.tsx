@@ -360,7 +360,9 @@ export function CombineView({
                   </table>
                   {!visible.length && (
                     <p className="py-2 text-xs text-zinc-500">
-                      No supported property differs between these branches.
+                      {rows.length === 0 && combination.structural.length === 0
+                        ? "This document has no layers Sonder can combine. It combines text layers (content, font, size, color) and solid-color fill layers (color). Pixel edits such as painting are kept in every checkpoint but can't be merged between branches."
+                        : "None of the combinable properties (text content, font, size and color; fill color) differ between these branches. Other differences, such as pixel edits or added layers, can't be merged."}
                     </p>
                   )}
                 </div>
