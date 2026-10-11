@@ -28,6 +28,10 @@ import { nodeTypes } from "./nodes";
 import type { CanvasAsset, CanvasData, CanvasItem } from "./types";
 
 const STATUS_REFRESH_MS = 15_000;
+/** Matches the `references` storage bucket's file size limit. */
+const MAX_REFERENCE_BYTES = 20 * 1024 * 1024;
+const REFERENCE_TYPES = ["image/png", "image/jpeg", "image/webp"];
+const megabytes = (bytes: number) => `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 /** Dashed to read as an organising link, not version history. */
 const EDGE_STYLE = { strokeDasharray: "6 4", strokeWidth: 2 };
 
@@ -151,6 +155,8 @@ function CanvasInner({ projectId }: { projectId: string }) {
   /** Document awaiting delete confirmation in the canvas popup. */
   const [pendingDelete, setPendingDelete] = useState<CanvasAsset | null>(null);
   const [deleting, setDeleting] = useState(false);
+  /** Upload problem shown in a popup. */
+  const [uploadError, setUploadError] = useState<{ title: string; detail: string } | null>(null);
   /** Card style chosen in the toolbox, waiting for a click on the canvas. */
   const [placing, setPlacing] = useState<PlacingTool | null>(null);
   const [toolsOpen, setToolsOpen] = useState(true);
@@ -472,12 +478,27 @@ function CanvasInner({ projectId }: { projectId: string }) {
     });
 
   async function uploadReference(file: File) {
+    // Checked before uploading, so a too-large image is reported at once.
+    if (file.size > MAX_REFERENCE_BYTES)
+      return setUploadError({
+        title: "Image too large",
+        detail: `"${file.name}" is ${megabytes(file.size)}. Reference images can be at most ${megabytes(MAX_REFERENCE_BYTES)}. Try a smaller or compressed version.`,
+      });
+    if (!REFERENCE_TYPES.includes(file.type))
+      return setUploadError({
+        title: "Unsupported image type",
+        detail: `"${file.name}" isn't a PNG, JPEG or WebP image.`,
+      });
     const { x, y } = center();
     const path = `${projectId}/${crypto.randomUUID()}-${file.name.replace(/[^\w.-]+/g, "_")}`;
     const { error } = await createClient()
       .storage.from("references")
       .upload(path, file, { contentType: file.type });
-    if (error) return setNotice(`Upload failed: ${error.message}`);
+    if (error)
+      return setUploadError({
+        title: "Upload failed",
+        detail: `"${file.name}" couldn't be uploaded: ${error.message}`,
+      });
     try {
       await api("POST", `${base}/canvas/items`, {
         itemType: "reference",
@@ -591,6 +612,33 @@ function CanvasInner({ projectId }: { projectId: string }) {
           />
         )}
       </div>
+      {uploadError && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+          onClick={() => setUploadError(null)}
+        >
+          <div
+            role="alertdialog"
+            aria-labelledby="upload-error-title"
+            className="flex w-full max-w-sm flex-col gap-4 rounded-lg bg-white p-5 shadow-xl dark:bg-zinc-900"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h2 id="upload-error-title" className="font-semibold">
+              {uploadError.title}
+            </h2>
+            <p className="text-sm text-zinc-600 dark:text-zinc-400">{uploadError.detail}</p>
+            <div className="flex justify-end">
+              <button
+                autoFocus
+                className="rounded bg-zinc-900 px-4 py-1.5 text-sm text-white hover:bg-zinc-700 dark:bg-white dark:text-black dark:hover:bg-zinc-200"
+                onClick={() => setUploadError(null)}
+              >
+                OK
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       {pendingDelete && (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
