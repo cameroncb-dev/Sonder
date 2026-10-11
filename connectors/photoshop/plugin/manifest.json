@@ -12,16 +12,64 @@
     {
       "type": "panel",
       "id": "sonderPanel",
-      "label": { "default": "Sonder" },
-      "minimumSize": { "width": 230, "height": 200 },
-      "maximumSize": { "width": 2000, "height": 2000 },
-      "preferredDockedSize": { "width": 260, "height": 320 },
-      "preferredFloatingSize": { "width": 260, "height": 320 }
+      "label": {
+        "default": "Sonder"
+      },
+      "minimumSize": {
+        "width": 230,
+        "height": 200
+      },
+      "maximumSize": {
+        "width": 2000,
+        "height": 2000
+      },
+      "preferredDockedSize": {
+        "width": 260,
+        "height": 320
+      },
+      "preferredFloatingSize": {
+        "width": 260,
+        "height": 320
+      },
+      "icons": [
+        {
+          "width": 23,
+          "height": 23,
+          "path": "icons/dark.png",
+          "scale": [1, 2],
+          "theme": ["darkest", "dark", "medium"]
+        },
+        {
+          "width": 23,
+          "height": 23,
+          "path": "icons/light.png",
+          "scale": [1, 2],
+          "theme": ["lightest", "light"]
+        }
+      ]
+    }
+  ],
+  "icons": [
+    {
+      "width": 23,
+      "height": 23,
+      "path": "icons/dark.png",
+      "scale": [1, 2],
+      "theme": ["darkest", "dark", "medium"],
+      "species": ["generic"]
+    },
+    {
+      "width": 23,
+      "height": 23,
+      "path": "icons/light.png",
+      "scale": [1, 2],
+      "theme": ["lightest", "light"],
+      "species": ["generic"]
     }
   ],
   "requiredPermissions": {
     "network": {
-      "domains": ["http://localhost:3000", "http://127.0.0.1:3000"]
+      "domains": ["http://localhost:3000"]
     },
     "localFileSystem": "request"
   }

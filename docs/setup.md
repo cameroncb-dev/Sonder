@@ -107,12 +107,18 @@ file at the end.
 ## 5. Photoshop connector
 
 1. Install **UXP Developer Tool** from the Creative Cloud desktop app (Apps → Categories →
-   Developer tools). Enable developer mode when prompted (Photoshop → Settings → Plugins →
-   Enable Developer Mode).
-2. Start Photoshop 2026.
-3. In UXP Developer Tool: **Add Plugin** → select `connectors/photoshop/plugin/manifest.json`
+   Developer tools).
+2. In **Photoshop 2026**: Settings → Plugins → check **Enable Developer Mode**, click OK, then
+   quit and restart Photoshop. This is required even when the UXP Developer Tool has enabled
+   its own developer mode. Without it, Photoshop rejects every plugin with
+   `Plugin rejected - <id> due to invalid object` in
+   `~/Library/Logs/Adobe/Adobe Photoshop 2026/UXPLogs_*.log`, and the tool only reports
+   "Plugin Load Failed". If other Photoshop versions are installed, make sure 2026 is the one
+   running; each version has its own setting.
+3. Start the web app (`pnpm dev`) so the panel's backend check can succeed.
+4. In UXP Developer Tool: **Add Plugin** → select `connectors/photoshop/plugin/manifest.json`
    → **Load**.
-4. Open the **Sonder** panel from Plugins → Sonder. It shows the Photoshop version, the active
+5. Open a document, then open the **Sonder** panel from the menu bar: Plugins → Sonder → Sonder. It shows the Photoshop version, the active
    document name, and whether `http://localhost:3000/api/health` is reachable.
 
 ## 6. Start everything

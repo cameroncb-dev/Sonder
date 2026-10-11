@@ -56,7 +56,7 @@ Connectors don't have to implement every operation.
 ## Transport (Phase 1 configuration)
 
 - The plugin calls the web backend over HTTP. The plugin manifest allow-lists
-  `http://localhost:3000` and `http://127.0.0.1:3000` for development. Production origins must
+  `http://localhost:3000` for development. Production origins must
   be added to `requiredPermissions.network.domains`.
 - Phase 3 adds pairing: a signed-in user approves a plugin session in the web app, and the plugin
   receives an expiring connector token. Jobs are delivered by polling while the panel is open,
