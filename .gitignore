@@ -37,3 +37,6 @@ __pycache__/
 .vscode/*
 !.vscode/extensions.json
 coverage/
+
+# photoshop connector build output
+connectors/photoshop/plugin/dist/

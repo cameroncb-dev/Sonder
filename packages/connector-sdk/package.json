@@ -1,0 +1,17 @@
+{
+  "name": "@sonder/connector-sdk",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Application-agnostic connector interface and validation helpers. Must run in UXP.",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@sonder/contracts": "workspace:*"
+  }
+}

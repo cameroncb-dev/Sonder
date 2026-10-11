@@ -115,11 +115,34 @@ file at the end.
    `~/Library/Logs/Adobe/Adobe Photoshop 2026/UXPLogs_*.log`, and the tool only reports
    "Plugin Load Failed". If other Photoshop versions are installed, make sure 2026 is the one
    running; each version has its own setting.
-3. Start the web app (`pnpm dev`) so the panel's backend check can succeed.
-4. In UXP Developer Tool: **Add Plugin** → select `connectors/photoshop/plugin/manifest.json`
-   → **Load**.
-5. Open a document, then open the **Sonder** panel from the menu bar: Plugins → Sonder → Sonder. It shows the Photoshop version, the active
-   document name, and whether `http://localhost:3000/api/health` is reachable.
+3. Build the plugin. It's TypeScript bundled with esbuild into `plugin/dist/panel.js`, which
+   git ignores:
+
+   ```sh
+   pnpm --filter @sonder/connector-photoshop build    # or `watch` while developing
+   ```
+
+4. Start the web app (`pnpm dev`) so the panel's backend check can succeed.
+5. In UXP Developer Tool: **Add Plugin** → select `connectors/photoshop/plugin/manifest.json`
+   → **Load & Watch**. With watch on, every rebuild reloads the plugin in Photoshop.
+6. Open the **Sonder** panel from the menu bar: Plugins → Sonder → Sonder. It shows the
+   Photoshop version, the active document, and whether `http://localhost:3000/api/health` is
+   reachable. **Read document** lists supported layers and their properties.
+
+### Feasibility suite (real Photoshop checks)
+
+Click **Run feasibility suite** in the panel, or trigger it from a terminal while the panel is
+open:
+
+```sh
+DATA="$HOME/Library/Application Support/Adobe/UXP/PluginsStorage/PHSP/27/Developer/com.sonder.photoshop/PluginData"
+echo "{\"runId\":\"r$(date +%s)\"}" > "$DATA/dev/trigger.json"
+cat "$DATA/feasibility/latest-report.json"     # written when the run finishes
+```
+
+Each run creates its own documents in Photoshop, closes them without saving, and writes every
+artifact (fixture, snapshots, previews, manifests, report) to
+`$DATA/feasibility/run-<runId>/`. Documents you already have open are not touched.
 
 ## 6. Start everything
 

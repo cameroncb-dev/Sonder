@@ -16,13 +16,13 @@ flowchart LR
 
 ## Components
 
-| Component        | Location                      | Responsibility                                                                                            |
-| ---------------- | ----------------------------- | --------------------------------------------------------------------------------------------------------- |
-| Web app          | `apps/web`                    | UI, route handlers, authorization, proposal orchestration, connector jobs                                 |
-| Vision service   | `services/vision`             | Palette extraction and visual diffs (Phase 7). Only the web backend calls it.                             |
-| Photoshop plugin | `connectors/photoshop/plugin` | Reads and modifies Photoshop documents, captures snapshots and previews                                   |
-| Shared packages  | `packages/*` (from Phase 2)   | `contracts` (Zod schemas), `connector-sdk`, `merge-engine`. Must run in UXP, so no Node or DOM-only APIs. |
-| Database         | `supabase/migrations`         | Schema, RLS and storage policies                                                                          |
+| Component        | Location                      | Responsibility                                                                                                                               |
+| ---------------- | ----------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| Web app          | `apps/web`                    | UI, route handlers, authorization, proposal orchestration, connector jobs                                                                    |
+| Vision service   | `services/vision`             | Palette extraction and visual diffs (Phase 7). Only the web backend calls it.                                                                |
+| Photoshop plugin | `connectors/photoshop/plugin` | Reads and modifies Photoshop documents, captures snapshots and previews                                                                      |
+| Shared packages  | `packages/*`                  | `contracts` (Zod schemas) and `connector-sdk` (Phase 2); `merge-engine` comes in Phase 5. They must run in UXP, so no Node or DOM-only APIs. |
+| Database         | `supabase/migrations`         | Schema, RLS and storage policies                                                                                                             |
 
 ## Trust boundaries
 

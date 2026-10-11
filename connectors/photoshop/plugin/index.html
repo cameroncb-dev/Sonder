@@ -12,10 +12,21 @@
         font-size: 14px;
       }
       .row {
-        margin: 6px 0;
+        margin: 4px 0;
       }
       .label {
         color: var(--uxp-host-text-color-secondary);
+      }
+      .actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+        margin: 10px 0;
+      }
+      #output {
+        white-space: pre-wrap;
+        font-family: monospace;
+        font-size: 11px;
       }
     </style>
   </head>
@@ -24,7 +35,12 @@
     <div class="row"><span class="label">Photoshop:</span> <span id="host">—</span></div>
     <div class="row"><span class="label">Active document:</span> <span id="doc">—</span></div>
     <div class="row"><span class="label">Backend:</span> <span id="backend">not checked</span></div>
-    <sp-button id="refresh">Refresh</sp-button>
-    <script src="index.js"></script>
+    <div class="actions">
+      <sp-button id="refresh" variant="secondary">Refresh</sp-button>
+      <sp-button id="read" variant="secondary">Read document</sp-button>
+      <sp-button id="suite">Run feasibility suite</sp-button>
+    </div>
+    <div id="output"></div>
+    <script src="dist/panel.js"></script>
   </body>
 </html>

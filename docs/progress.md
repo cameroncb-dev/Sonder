@@ -1,5 +1,77 @@
 # Progress
 
+## Phase 2 — Connector Contract and Photoshop Feasibility
+
+Status: **complete.** All acceptance criteria are verified in Photoshop 27.8.0. Branch:
+`phase-2-connector`.
+
+### Completed
+
+| Task                                     | Result                                                                                                           |
+| ---------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| Test PSD with text and solid background  | `dev/fixture.ts` builds it in Photoshop: 800×600 RGB 72 ppi, `Background Color` fill, `Headline` and `Body` text |
+| Capability reporting                     | `photoshopManifest()`, validated against `ConnectorManifest`                                                     |
+| Discover supported layers                | `readElements`: text and solid-fill layers, including inside groups                                              |
+| Assign and validate roles                | `validateMappings`: existence by layer id, kind, editability                                                     |
+| Read supported properties                | content, font (PostScript name + family/style), size, text color, fill color                                     |
+| Change headline font                     | DOM `characterStyle.font`, verified by read-back                                                                 |
+| Change background color                  | `batchPlay` select + `set contentLayer` (targetEnum), verified by read-back                                      |
+| Editable copy without overwriting source | `createCandidate` works on a copy of the snapshot; source bytes unchanged                                        |
+| Export a preview                         | `saveAs.png` as copy                                                                                             |
+| Save and reopen a native snapshot        | `captureCheckpoint` + `openCheckpoint` (opens a copy, never the snapshot)                                        |
+
+### Files added or changed
+
+- `packages/contracts/` (new): Zod schemas and tests.
+- `packages/connector-sdk/` (new): connector interface, errors, validation, digest, diff, tests.
+- `connectors/photoshop/`: TypeScript sources in `src/` (`core/` pure logic with tests, `ps/`
+  Photoshop calls, `connector.ts`, `dev/` fixture, suite and trigger, `panel.ts`), `build.mjs`
+  (esbuild), `tsconfig.json`. `plugin/index.js` was replaced by the `plugin/dist/panel.js` bundle.
+- `tsconfig.base.json` (new), root `package.json` (TypeScript and Vitest dev dependencies),
+  `.gitignore` (`plugin/dist/`).
+- No database migrations.
+
+### Verification performed (actual results)
+
+| Check                                                             | Result                                                                                                                                                            |
+| ----------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `pnpm typecheck`, `pnpm lint`, `pnpm format:check`                | Pass                                                                                                                                                              |
+| `pnpm test`                                                       | 24/24: web 6, contracts 5, connector-sdk 7, photoshop core 6                                                                                                      |
+| Feasibility suite in Photoshop 27.8.0 (runs `r215426`, `r215531`) | **14/14 pass, twice**                                                                                                                                             |
+| Read-back of fixture                                              | `Headline`: "Sonder Poster", `ArialMT`, 64 pt, `#FFFFFF`, editable; background `#1E3A5F`; 800×600, 72 ppi, `RGBColorMode`                                         |
+| Candidate                                                         | Headline font `ArialMT` → `Georgia`; background `#1E3A5F` → `#8B1E3F`; body and headline content unchanged                                                        |
+| Source intact                                                     | `source.psd` digest `f6ab4cc0001d7331` identical before and after candidate creation                                                                              |
+| Candidate editable                                                | Reopened candidate matches its manifest; headline still a live text layer and accepted a text edit                                                                |
+| Reopened source snapshot                                          | Elements identical to the manifest (no differences)                                                                                                               |
+| Missing font                                                      | `MISSING_FONT` from `validateProposal` and `createCandidate`; no candidate checkpoint written                                                                     |
+| Missing layer                                                     | Deleting `Body` → `ELEMENT_NOT_FOUND` naming role, layer and id                                                                                                   |
+| Wrong kind / incomplete checkpoint                                | `ELEMENT_KIND_MISMATCH`; snapshot without manifest → `CHECKPOINT_INCOMPLETE`                                                                                      |
+| Independent artifact checks (outside the plugin)                  | Previews viewed: source Arial on navy, candidate Georgia on maroon. PSD bytes: both keep 4 layers and 2 live text blocks; only the candidate references `Georgia` |
+
+### Problems found and fixed during verification
+
+- Photoshop 27.8 ignores `createTextLayer({ name })`, so the fixture renames layers after
+  creating them.
+- `set contentLayer` addressed by `_id` silently did nothing. The read-back check reported it as
+  `APPLICATION_ERROR` instead of a false success. Fixed by selecting the layer and targeting it.
+
+### Known limitations
+
+- Mixed-formatting detection (`hasMixedFormatting`) is unit-tested, but no mixed-format PSD has
+  been tried in Photoshop yet.
+- `discoverAssets` is implemented but not exercised by the suite.
+- Unsupported color modes are rejected by validation, but no CMYK document has been tested.
+- The suite keeps every run's artifacts (about 1.5 MB per run) in the plugin data folder. Delete
+  `feasibility/run-*` folders as needed.
+- `@types/photoshop` is pinned to 25.0.4 (the 27.x typings were too new to adopt). Runtime
+  behavior was verified on 27.8.0.
+- Vitest warns about an unmet `@types/node` peer (the web app pins `^20`). Harmless.
+
+### Recommended next phase
+
+Phase 3 (persistence, permissions, and jobs): store checkpoints in Supabase and deliver
+connector jobs to the paired plugin.
+
 ## Phase 1 — Collect Components and Configure Services
 
 Status: **complete.** All acceptance criteria are met; see the verification table.

@@ -4,6 +4,20 @@
   "private": true,
   "description": "Sonder Photoshop UXP connector. Load plugin/manifest.json with the UXP Developer Tool.",
   "scripts": {
-    "typecheck": "node --check plugin/index.js"
-  }
+    "build": "node build.mjs",
+    "watch": "node build.mjs --watch",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@sonder/connector-sdk": "workspace:*",
+    "@sonder/contracts": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/photoshop": "25.0.4",
+    "esbuild": "0.28.2",
+    "typescript": "5.9.3",
+    "vitest": "5.0.3"
+  },
+  "type": "module"
 }
