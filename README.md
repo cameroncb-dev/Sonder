@@ -79,6 +79,10 @@ Click the document card to open the inspector:
   a message. For uncaptured changes, **Switch anyway** is offered.
 - Tick two checkpoints and click **Compare** to see them side by side, with changed properties
   highlighted.
+- With two branches, click **Combine branches…**. Pick the branch to combine into and the one
+  to take changes from, choose per property (conflicts must be resolved), and click **Create
+  candidate**. Photoshop builds the result as a separate copy. Review its preview next to both
+  branches, then **Approve and finalize** (or **Discard**), and **Open result in the app**.
 
 On the canvas:
 

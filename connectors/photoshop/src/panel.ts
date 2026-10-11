@@ -48,21 +48,49 @@ async function refresh() {
   $("backend").textContent = await checkBackend();
 }
 
-/** "Linked" when the active document is already linked to the selected project. */
+/** File Sonder tracks for the document whose older file is in front (for "Show"). */
+let trackedPath = "";
+
+const fileName = (path: string | null | undefined) => path?.split("/").pop() ?? "another file";
+
+/**
+ * Shows which document and branch the active file is for. An older file of a tracked document
+ * gets a warning and a way to the tracked file instead of a Link button, so it can't be linked
+ * again as a separate document. The Link button reads "Linked" for tracked files.
+ */
 function renderLinkButton() {
   const button = $("link");
   let linked = false;
+  let tracked: RuntimeStatus["assets"][number] | undefined;
+  let former: NonNullable<RuntimeStatus["former"]>[number] | undefined;
   try {
     const doc = app.activeDocument;
     const path = doc ? documentPath(doc) : undefined;
-    linked =
-      !!path &&
-      runtime.status.assets.some((a) => a.path === path && a.projectId === selectedProject);
+    tracked = path ? runtime.status.assets.find((a) => a.path === path) : undefined;
+    former = path && !tracked ? runtime.status.former?.find((f) => f.path === path) : undefined;
+    linked = !!tracked && tracked.projectId === selectedProject;
     lastUiError = undefined;
   } catch (error) {
     // Never leave the button stuck because Photoshop refused a read (e.g. while modal).
     lastUiError = String(error);
   }
+
+  const tracking = $("tracking");
+  tracking.hidden = !tracked;
+  if (tracked)
+    tracking.textContent = `✓ Sonder tracks this file: ${tracked.assetName ?? "linked document"}${
+      tracked.branchName ? ` · branch ${tracked.branchName}` : ""
+    }`;
+  $("former").hidden = !former;
+  $("link-actions").hidden = !!former;
+  if (former) {
+    $("former-text").textContent =
+      `Edits here won't be captured. This is an earlier file of "${former.assetName}", which ` +
+      `Sonder now tracks as "${fileName(former.currentPath)}"` +
+      `${former.branchName ? ` (branch ${former.branchName})` : ""}.`;
+    trackedPath = former.currentPath ?? "";
+  }
+
   button.textContent = linking ? "Linking…" : linked ? "Linked" : "Link active document";
   if (linking || linked) button.setAttribute("disabled", "");
   else button.removeAttribute("disabled");
@@ -177,6 +205,21 @@ $("link").addEventListener("click", () => {
       linking = false;
       renderLinkButton();
     });
+});
+$("show-tracked").addEventListener("click", () => {
+  const path = trackedPath;
+  if (!path) return;
+  void runtime
+    .showTrackedCopy(path)
+    .then((shown) =>
+      shown
+        ? log(`Showing "${fileName(path)}".`)
+        : log(
+            `"${fileName(path)}" isn't open. In Sonder, click the document's card and use Switch ` +
+              "on its branch to open it.",
+          ),
+    )
+    .catch((error) => log(String(error)));
 });
 $("project").addEventListener("change", (event) => {
   selectedProject = (event.target as HTMLSelectElement).value;

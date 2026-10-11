@@ -91,6 +91,14 @@ export function HistoryGraph({
             )}
             <div className="min-w-0 flex-1">
               <div className="truncate text-xs font-medium">{c.message ?? "Checkpoint"}</div>
+              {c.noPropertyChanges && (
+                <div
+                  className="text-[10px] text-amber-700 dark:text-amber-400"
+                  title="Text and colors match the version before. If you edited, the edit may have gone into a different file than the one Sonder tracks."
+                >
+                  No text or color changes
+                </div>
+              )}
               <div className="flex flex-wrap items-center gap-1 text-[10px] text-zinc-500">
                 {new Date(c.createdAt).toLocaleString()}
                 {heads.map((b) => (

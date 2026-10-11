@@ -1,11 +1,25 @@
 import { type AssetRef, ConnectorError, diffElements, fnv1a64 } from "@sonder/connector-sdk";
-import type { ConnectorJob, Element, PairStartResponse } from "@sonder/contracts";
+import {
+  ChangeSet,
+  CheckpointManifest,
+  type ConnectorJob,
+  type Element,
+  type HeartbeatResponse,
+  type PairStartResponse,
+} from "@sonder/contracts";
 import { action, app, constants, core } from "photoshop";
 
 import { type PhotoshopCheckpoint, PhotoshopConnector } from "../connector";
 import { elementKey } from "../core/identity";
 import { findDocument } from "../ps/elements";
-import { asPsEntry, getFile, getOrCreateFolder, readBytes, writeBytes } from "../ps/files";
+import {
+  asPsEntry,
+  type Folder,
+  getFile,
+  getOrCreateFolder,
+  readBytes,
+  writeBytes,
+} from "../ps/files";
 import { ApiError, SonderApi } from "./api";
 import * as ledger from "./ledger";
 import { connectorFolder, load, save } from "./store";
@@ -37,7 +51,9 @@ export type ConnectionState =
 
 export interface RuntimeStatus {
   connection: ConnectionState;
-  assets: Array<{ assetId: string; projectId: string; path: string }>;
+  assets: HeartbeatResponse["assets"];
+  /** Open files that a tracked document used before; edits there aren't captured. */
+  former?: NonNullable<HeartbeatResponse["formerDocuments"]>;
   lastJob?: {
     id: string;
     operation: string;
@@ -66,10 +82,10 @@ function openDocuments() {
   return docs;
 }
 
-/** Whether a saved open document differs from its branch head, and what it was compared with. */
+/** Whether a saved open document differs from its reference checkpoint (`against`). */
 interface ChangeCheck {
   docId: number;
-  headCheckpointId: string;
+  against: string;
   uncaptured: boolean;
 }
 
@@ -89,6 +105,12 @@ export class ConnectorRuntime {
   /** Latest comparison per path; dropped when the document is saved so it is checked again. */
   private readonly checks = new Map<string, ChangeCheck>();
   private readonly headElements = new Map<string, Element[]>();
+  /**
+   * Checkpoint each open file was last opened from or captured as, keyed by path. Changes
+   * are judged against it rather than the branch head, which can move ahead of the open
+   * file (e.g. when a combination is approved onto its branch).
+   */
+  private baselines = new Map<string, string>();
   status: RuntimeStatus = {
     connection: { state: "unpaired" },
     assets: [],
@@ -107,6 +129,9 @@ export class ConnectorRuntime {
   }
 
   async start() {
+    this.baselines = new Map(
+      Object.entries(await load<Record<string, string>>("baselines.json", {})),
+    );
     const stored = await load<StoredSession | null>("session.json", null);
     if (stored && new Date(stored.expiresAt).getTime() > Date.now()) {
       this.session = stored;
@@ -117,7 +142,7 @@ export class ConnectorRuntime {
       this.update({ connection: { state: "expired", reason: "Session expired; connect again" } });
     }
     setInterval(() => void this.tick(), TICK_MS);
-    // A save changes what is on disk, so recheck it against the branch head.
+    // A save changes what is on disk, so recheck it against its reference checkpoint.
     void action.addNotificationListener(["save"], () => this.checks.clear());
   }
 
@@ -135,11 +160,49 @@ export class ConnectorRuntime {
     this.session = undefined;
     this.pairing = undefined;
     await save("session.json", null);
-    this.update({ connection: { state: "unpaired" }, assets: [] });
+    this.update({ connection: { state: "unpaired" }, assets: [], former: [] });
+  }
+
+  private async setBaseline(path: string, checkpointId: string) {
+    this.baselines.set(path, checkpointId);
+    this.checks.delete(path);
+    await save("baselines.json", Object.fromEntries(this.baselines));
+  }
+
+  /** Elements of a checkpoint, cached (finalized checkpoints never change). */
+  private async elementsOf(api: SonderApi, checkpointId: string): Promise<Element[]> {
+    let elements = this.headElements.get(checkpointId);
+    if (!elements) {
+      elements = (await api.checkpointElements(checkpointId)).elements;
+      this.headElements.set(checkpointId, elements);
+    }
+    return elements;
+  }
+
+  /** What an open file is compared with: its baseline, else its branch head. */
+  private reference(path: string): string | undefined {
+    return this.baselines.get(path) ?? this.heads.get(path) ?? undefined;
   }
 
   api(): SonderApi | undefined {
     return this.session ? new SonderApi(this.session.token) : undefined;
+  }
+
+  /**
+   * Brings the file Sonder tracks for a document to the front. Returns false when it isn't
+   * open (then the user switches branches from the canvas, which opens it).
+   */
+  async showTrackedCopy(path: string): Promise<boolean> {
+    const doc = openDocuments().find((d) => d.path === path);
+    const target = doc && findDocument(doc.id);
+    if (!target) return false;
+    await core.executeAsModal(
+      async () => {
+        app.activeDocument = target;
+      },
+      { commandName: "Sonder: show tracked copy" },
+    );
+    return true;
   }
 
   /** Development fault injection, used to verify recovery from interrupted jobs. */
@@ -202,8 +265,7 @@ export class ConnectorRuntime {
     const heartbeat = await api.heartbeat(
       docs.map(({ path, name, id, saved }) => {
         const check = this.checks.get(path);
-        const current =
-          check && check.docId === id && check.headCheckpointId === this.heads.get(path);
+        const current = check && check.docId === id && check.against === this.reference(path);
         return {
           path,
           name,
@@ -213,7 +275,11 @@ export class ConnectorRuntime {
       }),
     );
     this.heads = new Map(heartbeat.assets.map((a) => [a.path, a.headCheckpointId ?? null]));
-    this.update({ assets: heartbeat.assets, error: undefined });
+    this.update({
+      assets: heartbeat.assets,
+      former: heartbeat.formerDocuments ?? [],
+      error: undefined,
+    });
     const { job } = await api.claim();
     if (job) {
       await this.execute(api, job);
@@ -229,23 +295,20 @@ export class ConnectorRuntime {
    */
   private async checkForChanges(api: SonderApi, docs: ReturnType<typeof openDocuments>) {
     for (const doc of docs) {
-      const head = this.heads.get(doc.path);
-      if (!doc.saved || !head) continue;
+      // Only linked documents with history have something to compare with.
+      if (!doc.saved || !this.heads.get(doc.path)) continue;
+      const head = this.reference(doc.path)!;
       const check = this.checks.get(doc.path);
-      if (check && check.docId === doc.id && check.headCheckpointId === head) continue;
+      if (check && check.docId === doc.id && check.against === head) continue;
       try {
-        let expected = this.headElements.get(head);
-        if (!expected) {
-          expected = (await api.checkpointElements(head)).elements;
-          this.headElements.set(head, expected);
-        }
+        const expected = await this.elementsOf(api, head);
         // Bounded so a read Photoshop never answers cannot stall heartbeats and job claims.
         const { elements } = await withTimeout(
           this.connector.readProperties({ id: String(doc.id), name: doc.name }),
           CHECK_TIMEOUT_MS,
         );
         const uncaptured = diffElements(expected, elements, elementKey).length > 0;
-        this.checks.set(doc.path, { docId: doc.id, headCheckpointId: head, uncaptured });
+        this.checks.set(doc.path, { docId: doc.id, against: head, uncaptured });
       } catch {
         // Photoshop may refuse reads while busy (e.g. editing text); try again next tick.
       }
@@ -283,6 +346,8 @@ export class ConnectorRuntime {
           return report(await this.capture(api, job));
         case "openCheckpoint":
           return report(await this.checkout(api, job));
+        case "createCandidate":
+          return report(await this.candidate(api, job));
         case "readProperties": {
           const result = await this.connector.readProperties(this.assetFor(job));
           await ledger.record({ operationId: job.operationId, result });
@@ -339,6 +404,7 @@ export class ConnectorRuntime {
     const params = job.params as {
       branchId: string;
       branchName: string;
+      assetName?: string;
       checkpointId: string;
       native: { name: string; bytes: number; digest: string };
       currentHeadElements: Element[] | null;
@@ -356,12 +422,14 @@ export class ConnectorRuntime {
           message: `"${openDoc.name}" has unsaved changes. Save and capture it before switching branches.`,
         });
       }
-      if (!params.force && params.currentHeadElements) {
+      const baseline = currentPath ? this.baselines.get(currentPath) : undefined;
+      const expected = baseline ? await this.elementsOf(api, baseline) : params.currentHeadElements;
+      if (!params.force && expected) {
         const { elements } = await this.connector.readProperties({
           id: String(openDoc.id),
           name: openDoc.name,
         });
-        const differences = diffElements(params.currentHeadElements, elements, elementKey);
+        const differences = diffElements(expected, elements, elementKey);
         if (differences.length) {
           throw new ConnectorError({
             code: "UNCAPTURED_CHANGES",
@@ -379,12 +447,26 @@ export class ConnectorRuntime {
         message: "Downloaded snapshot does not match its manifest",
       });
     }
+    // One folder per switch keeps paths unique, so the file name can stay readable in
+    // Photoshop's tab: "Sonder-Test - font.psd".
     const working = await getOrCreateFolder(
-      await getOrCreateFolder(await connectorFolder(), "working"),
-      job.assetId ?? "unknown",
+      await getOrCreateFolder(
+        await getOrCreateFolder(await connectorFolder(), "working"),
+        job.assetId ?? "unknown",
+      ),
+      String(Date.now()),
     );
-    const safeName = params.branchName.replace(/[^\w.-]+/g, "_").slice(0, 60) || "branch";
-    const file = await writeBytes(working, `${safeName}-${Date.now()}.psd`, bytes);
+    const clean = (text: string) =>
+      text
+        .replace(/[\\/:*?"<>|]+/g, "_")
+        .trim()
+        .slice(0, 60);
+    const base = clean((params.assetName ?? "Document").replace(/\.psd$/i, "")) || "Document";
+    const file = await writeBytes(
+      working,
+      `${base} - ${clean(params.branchName) || "branch"}.psd`,
+      bytes,
+    );
 
     const opened = await core.executeAsModal(
       async () => {
@@ -396,6 +478,7 @@ export class ConnectorRuntime {
     );
     const path = documentPath(opened) ?? file.nativePath;
     const result = { path, branchId: params.branchId, checkpointId: params.checkpointId };
+    await this.setBaseline(path, params.checkpointId);
     await ledger.record({ operationId: job.operationId, result });
     await api.complete(job.id, result);
     return `switched to ${params.branchName}`;
@@ -415,6 +498,61 @@ export class ConnectorRuntime {
       checkpoint = await this.connector.captureCheckpoint(this.assetFor(job), folder, "checkpoint");
     }
 
+    const { checkpointId, summary } = await this.upload(api, job, checkpoint, folder);
+    const path = typeof job.assetLocator?.path === "string" ? job.assetLocator.path : undefined;
+    if (checkpointId && path) await this.setBaseline(path, checkpointId);
+    return `${summary} (${reused ? "reused capture" : "new capture"})`;
+  }
+
+  /**
+   * Builds a combination candidate: applies the job's change set to a copy of the target
+   * checkpoint's snapshot (never the open document) and uploads the result with its preview.
+   * Parents and proposal links are set by the backend from the job, not by the plugin.
+   */
+  private async candidate(api: SonderApi, job: ConnectorJob): Promise<string> {
+    const params = job.params as {
+      targetCheckpoint: { id: string; manifest: unknown };
+      changeSet: unknown;
+    };
+    const jobs = await getOrCreateFolder(await connectorFolder(), "jobs");
+    const folder = await getOrCreateFolder(jobs, job.operationId);
+
+    let checkpoint: PhotoshopCheckpoint;
+    let reused = true;
+    try {
+      checkpoint = await this.connector.loadCheckpoint(folder, "candidate");
+    } catch {
+      reused = false;
+      const manifest = CheckpointManifest.parse(params.targetCheckpoint.manifest);
+      const changeSet = ChangeSet.parse(params.changeSet);
+      const bytes = await api.downloadCheckpoint(params.targetCheckpoint.id);
+      const native = manifest.files.native;
+      if (bytes.length !== native.bytes || fnv1a64(bytes) !== native.digest) {
+        throw new ConnectorError({
+          code: "CHECKPOINT_INCOMPLETE",
+          message: "Downloaded snapshot does not match its manifest",
+        });
+      }
+      const source = await getOrCreateFolder(folder, "source");
+      await writeBytes(source, native.name, bytes);
+      checkpoint = await this.connector.createCandidate(
+        { manifest, location: source },
+        changeSet,
+        folder,
+        "candidate",
+      );
+    }
+    const { summary } = await this.upload(api, job, checkpoint, folder);
+    return `${summary} (${reused ? "reused candidate" : "new candidate"})`;
+  }
+
+  /** Uploads a local checkpoint for a job and finalizes it; resumes partial uploads. */
+  private async upload(
+    api: SonderApi,
+    job: ConnectorJob,
+    checkpoint: PhotoshopCheckpoint,
+    folder: Folder,
+  ): Promise<{ checkpointId?: string; summary: string }> {
     const message = typeof job.params.message === "string" ? job.params.message : undefined;
     const begin = await api.beginCheckpoint({
       jobId: job.id,
@@ -433,11 +571,14 @@ export class ConnectorRuntime {
     }
 
     if (this.faults.delete("before-finalize")) {
-      return `paused before finalize (fault injection), uploaded ${uploaded}`;
+      return { summary: `paused before finalize (fault injection), uploaded ${uploaded}` };
     }
 
     await api.finalize(begin.checkpointId);
     await ledger.record({ operationId: job.operationId, checkpointId: begin.checkpointId });
-    return `succeeded: checkpoint ${begin.checkpointId} (${reused ? "reused capture" : "new capture"}, uploaded ${uploaded})`;
+    return {
+      checkpointId: begin.checkpointId,
+      summary: `succeeded: checkpoint ${begin.checkpointId}, uploaded ${uploaded}`,
+    };
   }
 }

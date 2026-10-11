@@ -161,6 +161,23 @@ End-to-end check (dev server running, panel open with Load & Watch):
 pnpm --filter web e2e:connector
 ```
 
+### Combine demo data
+
+With the panel open and connected as an owner or editor of a project:
+
+```sh
+pnpm --filter web seed:combine-demo -- "<project name>"
+```
+
+The script creates a "Combine Demo" document through Photoshop and captures it on `main`. It
+then creates two branches from that first version, each with captured edits:
+
+- `serif-headline`: headline font and gold color;
+- `red-background`: background color and light-blue headline.
+
+Combining `red-background` into `serif-headline` shows a font kept from the target, a
+background taken from the source, and a headline color conflict to resolve.
+
 ### Feasibility suite (real Photoshop checks)
 
 Click **Run feasibility suite** in the panel, or trigger it from a terminal while the panel is

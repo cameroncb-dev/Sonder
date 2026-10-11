@@ -69,6 +69,8 @@ const PG_STATUS: Record<string, [number, string]> = {
   "42501": [403, "FORBIDDEN"],
   P0002: [404, "NOT_FOUND"],
   "55P03": [409, "STALE_LEASE"],
+  // object_not_in_prerequisite_state: something moved since the caller looked (e.g. a branch head).
+  "55000": [409, "STALE"],
   "23505": [409, "CONFLICT"],
   "23514": [422, "CONSTRAINT_VIOLATION"],
   "23503": [422, "INVALID_REFERENCE"],

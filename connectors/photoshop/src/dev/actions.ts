@@ -1,5 +1,8 @@
 import { app, constants, core } from "photoshop";
 
+import { PropertyValue } from "@sonder/contracts";
+
+import { applyProperty } from "../ps/apply";
 import { allLayers } from "../ps/elements";
 import { getFile, getOrCreateFolder, type Folder } from "../ps/files";
 import type { ConnectorRuntime } from "../sync/runtime";
@@ -30,6 +33,16 @@ export function devActions(
       const file = await getFile(folder, "fixture.psd");
       const doc = await core.executeAsModal(() => app.open(file as unknown as File), {
         commandName: "Sonder: open e2e document",
+      });
+      return { path: documentPath(doc), name: doc.name };
+    },
+    /** Reopens a fixture created by open-fixture, given its folder name (e.g. after a switch). */
+    "reopen-fixture": async (command: TriggerCommand, root: Folder) => {
+      if (typeof command.folder !== "string" || !/^docs-[\w-]+$/.test(command.folder))
+        throw new Error("folder required");
+      const file = await getFile(await getOrCreateFolder(root, command.folder), "fixture.psd");
+      const doc = await core.executeAsModal(() => app.open(file as unknown as File), {
+        commandName: "Sonder: reopen e2e document",
       });
       return { path: documentPath(doc), name: doc.name };
     },
@@ -68,6 +81,24 @@ export function devActions(
         { commandName: "Sonder: e2e edit" },
       );
     },
+    /** Applies one typed property to the named layer of the active document (unsaved). */
+    "set-property": async (command: TriggerCommand) => {
+      const property = PropertyValue.parse(command.property);
+      if (typeof command.layer !== "string") throw new Error("layer required");
+      return core.executeAsModal(
+        async () => {
+          const doc = app.activeDocument;
+          if (!doc) throw new Error("No active document");
+          const layer = allLayers(doc).find((l) => l.name === command.layer);
+          if (!layer) throw new Error(`No layer named ${String(command.layer)}`);
+          await applyProperty(doc, layer, property);
+          return { document: doc.name, layer: layer.name, property };
+        },
+        { commandName: "Sonder: e2e set property" },
+      );
+    },
+    /** The two installed fonts the fixture and checks use (the fixture uses the first). */
+    fonts: async () => pickFonts(),
     "save-active": async () =>
       core.executeAsModal(
         async () => {

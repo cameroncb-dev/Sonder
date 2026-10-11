@@ -1,4 +1,8 @@
+import { diffElements, nativeIdentity } from "@sonder/connector-sdk";
+import type { Element } from "@sonder/contracts";
+
 import { requireProjectRole, requireUser } from "@/server/auth";
+import { connectorCapabilities } from "@/server/combine";
 import { handler, unwrap } from "@/server/http";
 import { requireAsset } from "@/server/projects";
 
@@ -9,7 +13,8 @@ interface CheckpointRow {
   created_by: string | null;
   preview_path: string;
   native_bytes: number;
-  manifest: { elements?: unknown[]; document?: unknown; applicationVersion?: string };
+  proposal_item_id: string | null;
+  manifest: { elements?: Element[]; document?: unknown; applicationVersion?: string };
 }
 
 /** Finalized checkpoints with parent links, branches and pending jobs for one asset. */
@@ -27,14 +32,34 @@ export const GET = handler(
     ]);
     const asset = await requireAsset(supabase, projectId, assetId);
 
-    const checkpoints = unwrap(
+    const all = unwrap(
       await supabase
         .from("checkpoints")
-        .select("id,message,created_at,created_by,preview_path,native_bytes,manifest")
+        .select(
+          "id,message,created_at,created_by,preview_path,native_bytes,proposal_item_id,manifest",
+        )
         .eq("asset_id", assetId)
         .eq("status", "finalized")
         .order("created_at"),
     ) as CheckpointRow[];
+    // Combination candidates join history only once their proposal is approved.
+    const itemIds = all.map((c) => c.proposal_item_id).filter((id): id is string => !!id);
+    const finalizedItems = new Set(
+      itemIds.length
+        ? (
+            unwrap(
+              await supabase
+                .from("proposal_items")
+                .select("id")
+                .in("id", itemIds)
+                .eq("status", "finalized"),
+            ) as Array<{ id: string }>
+          ).map((i) => i.id)
+        : [],
+    );
+    const checkpoints = all.filter(
+      (c) => !c.proposal_item_id || finalizedItems.has(c.proposal_item_id),
+    );
     const parents = unwrap(
       await supabase
         .from("checkpoint_parents")
@@ -66,6 +91,20 @@ export const GET = handler(
       : { data: [] };
     const urls = new Map((signed ?? []).map((s) => [s.path, s.signedUrl]));
 
+    // Flags captures whose supported properties equal their parent's, e.g. when the edit went
+    // into a different file than the one Sonder captured.
+    const identityFields = await connectorCapabilities(asset.application, projectId).then(
+      (c) => c.identityFields,
+      () => undefined,
+    );
+    const key = (e: Element) => nativeIdentity(e.native, identityFields);
+    const elementsById = new Map(checkpoints.map((c) => [c.id, c.manifest.elements ?? []]));
+    const unchanged = (c: CheckpointRow) => {
+      const parent = parents.find((p) => p.checkpoint_id === c.id)?.parent_id;
+      const before = parent ? elementsById.get(parent) : undefined;
+      return before ? diffElements(before, c.manifest.elements ?? [], key).length === 0 : false;
+    };
+
     return Response.json({
       role,
       asset: {
@@ -84,6 +123,7 @@ export const GET = handler(
         parents: parents.filter((p) => p.checkpoint_id === c.id).map((p) => p.parent_id),
         previewUrl: urls.get(c.preview_path) ?? null,
         nativeBytes: c.native_bytes,
+        noPropertyChanges: unchanged(c),
         document: c.manifest.document ?? null,
         elements: c.manifest.elements ?? [],
       })),

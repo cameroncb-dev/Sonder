@@ -404,6 +404,35 @@ async function main() {
     await waitFor("heartbeat maps the working copy", async () =>
       (await pluginStatus()).assets.some((a: { path: string }) => a.path === forced.result?.path),
     );
+    check(
+      "the working copy is named after the document and branch",
+      typeof forced.result?.path === "string" && forced.result.path.endsWith("/fixture - alt.psd"),
+      forced.result?.path,
+    );
+
+    // Reopening the original file (as a user might) must not look like a new document.
+    const fixtureFolder = (doc.path as string).split("/").slice(-2, -1)[0];
+    await trigger("reopen-fixture", { folder: fixtureFolder });
+    const formerSeen = await waitFor("panel recognises the original file", async () =>
+      (await pluginStatus()).former?.find(
+        (f: { path: string; currentPath: string }) =>
+          f.path === doc.path && f.currentPath === forced.result?.path,
+      ),
+    ).catch(() => undefined);
+    const relink = await trigger("link", { projectId }).then(
+      () => "linked",
+      (e: Error) => e.message,
+    );
+    const { count: assetCount } = await admin
+      .from("assets")
+      .select("id", { count: "exact", head: true })
+      .eq("project_id", projectId);
+    check(
+      "the original file is recognised as an earlier file and can't be linked again",
+      !!formerSeen && relink.includes("earlier version") && assetCount === 1,
+      relink,
+    );
+    await trigger("close-docs", { match: `${fixtureFolder}/fixture.psd` });
 
     const op3 = `e2e-${randomUUID()}`;
     const job3 = await owner.api("POST", `/api/projects/${projectId}/assets/${asset.id}/capture`, {
@@ -433,6 +462,10 @@ async function main() {
       sources?.length === 2 &&
         sources.every((s) => s.status === "finalized") &&
         sources.find((s) => s.id === cp1.id)?.native_digest === cpRow!.manifest.files.native.digest,
+    );
+    check(
+      "history flags a capture with no text or color changes",
+      h3.checkpoints.find((c: { id: string }) => c.id === pending?.id)?.noPropertyChanges === true,
     );
     check(
       "history shows three checkpoints with previews",
@@ -547,6 +580,227 @@ async function main() {
       [reviewerHistory.status, reviewerMove.status, reviewerCapture.status],
     );
 
+    // --- Phase 5: selective combination and approval ---
+    const fonts = (await trigger("fonts")) as [string, string];
+    const captureUrl = `/api/projects/${projectId}/assets/${asset.id}/capture`;
+    const captureNow = async (message: string) => {
+      const r = await owner.api("POST", captureUrl, { message });
+      const done = await waitJob(owner.api, r.body.job.id, "succeeded");
+      return done.job.result?.checkpointId as string;
+    };
+    const switchTo = async (branchId: string) => {
+      const r = await owner.api("POST", `/api/projects/${projectId}/assets/${asset.id}/checkout`, {
+        branchId,
+      });
+      const job = await waitFor("switch to finish", async () => {
+        const j = await owner.api("GET", `/api/jobs/${r.body.job.id}`);
+        return ["succeeded", "failed"].includes(j.body.job?.status) ? j.body.job : undefined;
+      });
+      if (job.status === "succeeded")
+        await waitFor("heartbeat maps the working copy", async () =>
+          (await pluginStatus()).assets.some((a: { path: string }) => a.path === job.result?.path),
+        );
+      return job;
+    };
+    const setProperty = (layer: string, property: unknown) =>
+      trigger("set-property", { layer, property });
+
+    // Two branches from the first checkpoint. "background" recolors the background and the
+    // headline; alt changes the headline font and recolors the headline differently.
+    const bg = await owner.api("POST", `/api/projects/${projectId}/assets/${asset.id}/branches`, {
+      name: "background",
+      checkpointId: cp1.id,
+    });
+    const toBg = await switchTo(bg.body.branch.id);
+    check("switching a captured document needs no force", toBg.status === "succeeded", toBg.error);
+    await setProperty("Background Color", { type: "fill.color", value: "#8B1E3F" });
+    await setProperty("Headline", { type: "text.color", value: "#FFD700" });
+    await trigger("save-active");
+    const bgHead = await captureNow("Red background, gold headline");
+
+    const toAlt = await switchTo(alt.body.branch.id);
+    await setProperty("Headline", { type: "text.font", value: { postScriptName: fonts[1] } });
+    await setProperty("Headline", { type: "text.color", value: "#00FF00" });
+    await trigger("save-active");
+    const fontHead = await captureNow("New headline font, green headline");
+    const fontHistory = (await owner.api("GET", historyUrl)).body;
+    check(
+      "history does not flag a capture that changed text or colors",
+      fontHistory.checkpoints.find((c: { id: string }) => c.id === fontHead)?.noPropertyChanges ===
+        false,
+    );
+    check(
+      "both branches captured their edits",
+      toAlt.status === "succeeded" && !!bgHead && !!fontHead,
+      { bgHead, fontHead },
+    );
+
+    const combineQuery = `targetBranchId=${alt.body.branch.id}&sourceBranchId=${bg.body.branch.id}`;
+    const p5Preview = (
+      await owner.api(
+        "GET",
+        `/api/projects/${projectId}/assets/${asset.id}/combine?${combineQuery}`,
+      )
+    ).body;
+    type Row = { id: string; name: string; property: string; status: string; defaultSide: string };
+    const rowFor = (name: string, property: string) =>
+      (p5Preview.rows as Row[] | undefined)?.find(
+        (r) => r.name === name && r.property === property,
+      );
+    const fontRow = rowFor("Headline", "text.font");
+    const colorRow = rowFor("Headline", "text.color");
+    const fillRow = rowFor("Background Color", "fill.color");
+    check(
+      "combination compares both branches against their shared ancestor",
+      p5Preview.base?.id === cp1.id &&
+        fontRow?.status === "target" &&
+        fillRow?.status === "source" &&
+        fillRow.defaultSide === "source" &&
+        colorRow?.status === "conflict" &&
+        colorRow.defaultSide === null,
+      {
+        base: p5Preview.base?.id === cp1.id,
+        font: fontRow?.status,
+        fill: fillRow?.status,
+        color: colorRow?.status,
+      },
+    );
+
+    const proposalsUrl = `/api/projects/${projectId}/assets/${asset.id}/proposals`;
+    const body = { targetBranchId: alt.body.branch.id, sourceBranchId: bg.body.branch.id };
+    const unresolved = await owner.api("POST", proposalsUrl, body);
+    check(
+      "a conflicting property must be resolved before a candidate is made",
+      unresolved.status === 422 && unresolved.body.error?.code === "CONFLICT_UNRESOLVED",
+      unresolved.body.error?.message,
+    );
+
+    const p5Created = await owner.api("POST", proposalsUrl, {
+      ...body,
+      resolutions: { [colorRow!.id]: "target" },
+    });
+    const built = await waitJob(owner.api, p5Created.body.job?.id, "succeeded", 120_000).catch(
+      () => undefined,
+    );
+    const listed = (await owner.api("GET", proposalsUrl)).body.proposals?.[0];
+    const candidate = listed?.candidate;
+    check(
+      "plugin builds a candidate from a copy and the proposal becomes ready",
+      p5Created.status === 201 && !!built && listed?.status === "ready" && !!candidate?.previewUrl,
+      listed?.status ?? p5Created.body.error?.message,
+    );
+
+    type El = { name: string; properties: Array<{ type: string; value: unknown }> };
+    const prop = (elements: El[] | undefined, name: string, type: string) =>
+      elements?.find((e) => e.name === name)?.properties.find((p) => p.type === type)?.value;
+    const cand = candidate?.elements as El[] | undefined;
+    const { data: cp1Row } = await admin
+      .from("checkpoints")
+      .select("manifest")
+      .eq("id", cp1.id)
+      .single();
+    const baseElements = cp1Row?.manifest.elements as El[];
+    check(
+      "candidate takes alt's font and the background branch's color, keeping the chosen headline color",
+      (prop(cand, "Headline", "text.font") as { postScriptName?: string })?.postScriptName ===
+        fonts[1] &&
+        prop(cand, "Background Color", "fill.color") === "#8B1E3F" &&
+        prop(cand, "Headline", "text.color") === "#00FF00",
+    );
+    check(
+      "unselected content is preserved",
+      ["text.content", "text.size"].every(
+        (t) => prop(cand, "Headline", t) === prop(baseElements, "Headline", t),
+      ) &&
+        ["text.content", "text.font", "text.size", "text.color"].every(
+          (t) =>
+            JSON.stringify(prop(cand, "Body", t)) === JSON.stringify(prop(baseElements, "Body", t)),
+        ),
+    );
+    const beforeApproval = (await owner.api("GET", historyUrl)).body;
+    check(
+      "the candidate stays out of history until approved",
+      !beforeApproval.checkpoints.some((c: { id: string }) => c.id === candidate?.id),
+    );
+
+    const { data: sourcesBefore } = await admin
+      .from("checkpoints")
+      .select("id,native_digest,preview_digest,status")
+      .in("id", [cp1.id, fontHead, bgHead]);
+    const p5Approved = await owner.api(
+      "POST",
+      `/api/projects/${projectId}/proposals/${listed?.id}/approve`,
+      { candidateCheckpointId: candidate?.id },
+    );
+    const afterApproval = (await owner.api("GET", historyUrl)).body;
+    const altHead = afterApproval.branches.find(
+      (b: { id: string }) => b.id === alt.body.branch.id,
+    )?.head_checkpoint_id;
+    const merged = afterApproval.checkpoints.find((c: { id: string }) => c.id === candidate?.id);
+    check(
+      "approval finalizes the candidate on alt with both branch heads as parents",
+      p5Approved.status === 200 &&
+        altHead === candidate?.id &&
+        [...(merged?.parents ?? [])].sort().join() === [fontHead, bgHead].sort().join(),
+      p5Approved.body.error?.message ?? merged?.parents,
+    );
+
+    const { data: approvedRow } = await admin
+      .from("checkpoints")
+      .select("native_path,preview_path,manifest")
+      .eq("id", candidate?.id)
+      .single();
+    const { data: item } = await admin
+      .from("proposal_items")
+      .select("outcome")
+      .eq("proposal_id", listed?.id)
+      .single();
+    const bytesOf = async (bucket: string, path: string) =>
+      new Uint8Array(await (await admin.storage.from(bucket).download(path)).data!.arrayBuffer());
+    const p5NativeBytes = await bytesOf("snapshots", approvedRow!.native_path);
+    const previewBytesApproved = await bytesOf("previews", approvedRow!.preview_path);
+    check(
+      "the approved artifact matches the preview that was reviewed",
+      fnv1a64(previewBytesApproved) === item?.outcome.previewDigest &&
+        item?.outcome.previewDigest === candidate?.previewDigest &&
+        fnv1a64(p5NativeBytes) === item?.outcome.nativeDigest &&
+        item?.outcome.nativeDigest === approvedRow!.manifest.files.native.digest,
+    );
+    const { data: sourcesAfter } = await admin
+      .from("checkpoints")
+      .select("id,native_digest,preview_digest,status")
+      .in("id", [cp1.id, fontHead, bgHead]);
+    check(
+      "all source checkpoints are preserved",
+      sourcesAfter?.length === 3 &&
+        JSON.stringify(sourcesAfter?.sort((a, b) => a.id.localeCompare(b.id))) ===
+          JSON.stringify(sourcesBefore?.sort((a, b) => a.id.localeCompare(b.id))),
+    );
+    const p5Again = await owner.api(
+      "POST",
+      `/api/projects/${projectId}/proposals/${listed?.id}/approve`,
+      { candidateCheckpointId: candidate?.id },
+    );
+    check("an approved proposal cannot be approved twice", p5Again.status === 409, p5Again.status);
+
+    check(
+      "approval does not flag the open document as uncaptured",
+      await documentState(false, false),
+    );
+    const opened = await switchTo(alt.body.branch.id);
+    check(
+      "the approved result opens in Photoshop without force",
+      opened.status === "succeeded" && opened.result?.checkpointId === candidate?.id,
+      opened.error?.message,
+    );
+    check("the opened result reports no uncaptured changes", await documentState(false, false));
+    const nothing = await owner.api("POST", proposalsUrl, body);
+    check(
+      "combining the same branches again finds nothing new",
+      nothing.status === 422 && nothing.body.error?.code === "NOTHING_TO_COMBINE",
+      nothing.body.error?.code,
+    );
+
     // --- Routing: a job for a document that is not open is not delivered ---
     const closedAsset = await owner.api("POST", `/api/projects/${projectId}/assets`, {
       name: "Closed",
@@ -563,6 +817,20 @@ async function main() {
     check(
       "job for an unopened document stays queued",
       still.body.job.status === "queued" && still.body.job.attempts === 0,
+    );
+    const keepHistory = await owner.api("DELETE", `/api/projects/${projectId}/assets/${asset.id}`);
+    const removeEmpty = await owner.api(
+      "DELETE",
+      `/api/projects/${projectId}/assets/${closedAsset.body.asset.id}`,
+    );
+    const { count: closedLeft } = await admin
+      .from("assets")
+      .select("id", { count: "exact", head: true })
+      .eq("id", closedAsset.body.asset.id);
+    check(
+      "empty documents delete directly; documents with history need explicit confirmation",
+      keepHistory.status === 409 && removeEmpty.status === 204 && closedLeft === 0,
+      [keepHistory.status, removeEmpty.status],
     );
 
     // --- Authorization ---
