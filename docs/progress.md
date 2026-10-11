@@ -96,6 +96,16 @@ New end-to-end checks:
   have tried to update immutable finalized checkpoints when a proposal was deleted. Changed
   to a plain reference (project deletion removes both together).
 
+### Also added during testing
+
+- **Delete documents from the canvas.** Use "Delete from project" in the inspector, or select
+  the card and press Delete. A popup confirms with a grey Cancel and a red Delete. Documents
+  with history get the warning "This project card has some change history"; deleting
+  removes branches, checkpoints, proposals and stored snapshot and preview files. The API
+  refuses a document with checkpoints unless `?withHistory=true` is sent, which only the
+  popup does. Owners and editors can delete. Covered by an integration test (cascade) and an
+  E2E check (confirmation required).
+
 ### Known limitations
 
 - Only properties are combined. Added or removed layers, pixels and mixed-format text are

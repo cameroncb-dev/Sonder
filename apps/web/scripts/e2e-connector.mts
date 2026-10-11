@@ -789,7 +789,7 @@ async function main() {
       .select("id", { count: "exact", head: true })
       .eq("id", closedAsset.body.asset.id);
     check(
-      "documents without checkpoints can be removed; documents with history cannot",
+      "empty documents delete directly; documents with history need explicit confirmation",
       keepHistory.status === 409 && removeEmpty.status === 204 && closedLeft === 0,
       [keepHistory.status, removeEmpty.status],
     );

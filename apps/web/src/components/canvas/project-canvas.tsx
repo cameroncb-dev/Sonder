@@ -23,7 +23,7 @@ import { createClient } from "@/lib/supabase/client";
 
 import { Inspector } from "./inspector";
 import { nodeTypes } from "./nodes";
-import type { CanvasData, CanvasItem } from "./types";
+import type { CanvasAsset, CanvasData, CanvasItem } from "./types";
 
 const STATUS_REFRESH_MS = 15_000;
 /** Dashed to read as an organising link, not version history. */
@@ -90,6 +90,9 @@ function CanvasInner({ projectId }: { projectId: string }) {
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
   const [selectedAsset, setSelectedAsset] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  /** Document awaiting delete confirmation in the canvas popup. */
+  const [pendingDelete, setPendingDelete] = useState<CanvasAsset | null>(null);
+  const [deleting, setDeleting] = useState(false);
   /** Full reload: positions, cards and connections. */
   const [reloadKey, setReloadKey] = useState(0);
   /** Soft refresh: asset status and previews only, never positions. */
@@ -243,8 +246,36 @@ function CanvasInner({ projectId }: { projectId: string }) {
       if (node.type !== "asset")
         void api("DELETE", `${base}/canvas/items/${node.id}`).catch(reload);
     }
-    // Asset cards cannot be deleted; reload restores any that were removed locally.
-    if (deleted.some((n) => n.type === "asset")) reload();
+  }
+
+  /** Document cards are deleted only after confirming in the popup; other cards go at once. */
+  const onBeforeDelete = async ({
+    nodes: doomed,
+    edges: links,
+  }: {
+    nodes: Node[];
+    edges: Edge[];
+  }) => {
+    const card = doomed.find((n) => n.type === "asset");
+    if (!card) return true;
+    setPendingDelete((card.data as { asset: CanvasAsset }).asset);
+    return { nodes: doomed.filter((n) => n.type !== "asset"), edges: links };
+  };
+
+  async function deleteAsset(asset: CanvasAsset) {
+    setDeleting(true);
+    try {
+      // The popup is the confirmation, including for documents with history.
+      await api("DELETE", `${base}/assets/${asset.id}?withHistory=true`);
+      setPendingDelete(null);
+      setSelectedAsset(null);
+      reload();
+    } catch (e) {
+      report(e);
+      setPendingDelete(null);
+    } finally {
+      setDeleting(false);
+    }
   }
 
   /** Viewport centre, nudged so repeated adds don't stack exactly on top of each other. */
@@ -356,6 +387,7 @@ function CanvasInner({ projectId }: { projectId: string }) {
             onConnect={canEdit ? onConnect : undefined}
             onEdgesDelete={canEdit ? onEdgesDelete : undefined}
             onNodesDelete={canEdit ? onNodesDelete : undefined}
+            onBeforeDelete={canEdit ? onBeforeDelete : async () => false}
             onNodeClick={(_e, node) =>
               setSelectedAsset(
                 node.type === "asset" ? (node.data as { asset: { id: string } }).asset.id : null,
@@ -378,13 +410,55 @@ function CanvasInner({ projectId }: { projectId: string }) {
             asset={asset}
             onClose={() => setSelectedAsset(null)}
             onChanged={() => setRefreshKey((k) => k + 1)}
-            onRemoved={() => {
-              setSelectedAsset(null);
-              reload();
-            }}
+            onRequestDelete={() => setPendingDelete(asset)}
           />
         )}
       </div>
+      {pendingDelete && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+          onClick={() => !deleting && setPendingDelete(null)}
+        >
+          <div
+            role="alertdialog"
+            aria-labelledby="delete-title"
+            className="flex w-full max-w-sm flex-col gap-4 rounded-lg bg-white p-5 shadow-xl dark:bg-zinc-900"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h2 id="delete-title" className="font-semibold">
+              Delete {pendingDelete.name}?
+            </h2>
+            <p className="text-sm text-zinc-600 dark:text-zinc-400">
+              {pendingDelete.activeBranch
+                ? "This project card has some change history. Are you sure you want to delete it?"
+                : "Are you sure you want to delete this project card?"}
+            </p>
+            {pendingDelete.activeBranch && (
+              <p className="text-xs text-zinc-500">
+                All of its checkpoints, branches and combinations are deleted for everyone. The file
+                on your computer isn&apos;t touched.
+              </p>
+            )}
+            <div className="flex justify-end gap-2">
+              <button
+                autoFocus
+                className="rounded bg-zinc-200 px-4 py-1.5 text-sm text-zinc-800 hover:bg-zinc-300 disabled:opacity-50 dark:bg-zinc-700 dark:text-zinc-100 dark:hover:bg-zinc-600"
+                disabled={deleting}
+                onClick={() => setPendingDelete(null)}
+              >
+                Cancel
+              </button>
+              <button
+                className="rounded bg-red-600 px-4 py-1.5 text-sm text-white hover:bg-red-700 disabled:opacity-50"
+                disabled={deleting}
+                onClick={() => void deleteAsset(pendingDelete)}
+              >
+                {deleting ? "Deleting…" : "Delete"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

@@ -277,3 +277,23 @@ describe("combination proposals", () => {
     });
   });
 });
+
+describe("deleting a document with history", () => {
+  it("removes branches, checkpoints, proposals and candidates in one delete", async () => {
+    const { error } = await editor.client.from("assets").delete().eq("id", assetId);
+    expect(error).toBeNull();
+    for (const table of [
+      "checkpoints",
+      "branches",
+      "checkpoint_parents",
+      "proposal_items",
+      "jobs",
+    ]) {
+      const { count } = await admin
+        .from(table)
+        .select("*", { count: "exact", head: true })
+        .eq("asset_id", assetId);
+      expect({ table, count }).toEqual({ table, count: 0 });
+    }
+  });
+});
