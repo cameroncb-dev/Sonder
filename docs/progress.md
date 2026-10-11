@@ -9,6 +9,46 @@ Scope (see `Design_Plan.md` §17): **Suggest directions** for a document, and **
 board**, both through Google Gemini with server-side validation, preview and approval or undo.
 The Gemini key (`GEMINI_API_KEY`) is supplied by the user in `apps/web/.env.local`.
 
+### Built so far (verified without a key)
+
+- **Gemini provider** (`src/server/llm/gemini.ts`): REST `generateContent`. The key goes in
+  the `x-goog-api-key` header, never the URL. JSON replies are validated against a Zod
+  schema, with one retry carrying the validation error. Previews are sent as inline images.
+  Default model `gemini-3.8-flash` (Google's docs list it as stable and recommended for new
+  projects), overridable with `LLM_MODEL`. `GET /api/ai/status` reports availability
+  without secrets.
+- **Suggest directions** (inspector → Ideas).
+  - Context: the current preview image, the layers under short ids, the allowed properties
+    and fonts, and project notes.
+  - `validateSuggestions` keeps only changes to real, editable layers with
+    connector-supported properties and well-formed values (#RRGGBB colors, sizes 4–500,
+    allowed fonts, non-empty text). It reports what was left out, and drops no-op
+    suggestions.
+  - **Try it** re-validates against the current version and creates a `suggested_branch`
+    proposal, built by the usual `createCandidate` job. **Keep as branch**
+    (`keep_suggestion`) creates a new branch at the exact candidate; existing branches never
+    move.
+- **Organize board** (header → ✦ Organize).
+  - Gemini returns only groups, titles, colors, related cards and a summary.
+    `layoutBoard` computes positions: sections flow in rows, cards sit in a grid inside each
+    section, and ungrouped cards go in a row underneath.
+  - Unknown or repeated ids are ignored, and existing sections can be reused.
+  - The plan is previewed before applying. Apply goes through normal versioned saves and
+    records an undo; **Undo organize** restores positions and removes what was added.
+- Migration `20261016000100_suggested_branches.sql`: the `suggested_branch` kind,
+  `create_suggestion_proposal` and `keep_suggestion`.
+- **Checks:**
+  - unit 29/29 (Gemini adapter with a mocked network: key only in a header, image sent,
+    retry, errors; suggestion validation; layout with no overlaps, ignored ids, section
+    reuse, valid connections). The layout tests caught a bug where a card listed twice in
+    one group was placed twice; fixed.
+  - integration 45/45 (reviewers refused, a candidate builds from the current version,
+    exact-candidate keep creates a branch while main stays put, duplicate branch names and
+    other documents' versions refused).
+
+**Not verified yet:** a real Gemini call, which needs the user's key, and the screens in a
+browser.
+
 ## Phase 6 — Shared Themes, Project Directions and Canvas Additions
 
 Status: **complete, pending the user's check of directions.** Every acceptance criterion is
