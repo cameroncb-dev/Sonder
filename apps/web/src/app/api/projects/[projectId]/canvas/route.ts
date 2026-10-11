@@ -35,10 +35,11 @@ export const GET = handler(
     if (missing.length) {
       // Card placement is presentation data derived from assets, so the backend creates it for any member.
       const start = items.length;
+      // Concurrent loads may race to place the same card; the unique index keeps one.
       const created = unwrap(
         await createAdminClient()
           .from("canvas_items")
-          .insert(
+          .upsert(
             missing.map((asset, i) => ({
               project_id: projectId,
               item_type: "asset",
@@ -46,6 +47,7 @@ export const GET = handler(
               x: GRID.x + ((start + i) % GRID.columns) * GRID.dx,
               y: GRID.y + Math.floor((start + i) / GRID.columns) * GRID.dy,
             })),
+            { onConflict: "project_id,ref_id", ignoreDuplicates: true },
           )
           .select("*"),
       ) as Array<Record<string, unknown>>;

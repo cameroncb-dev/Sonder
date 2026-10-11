@@ -215,8 +215,20 @@ function CanvasInner({ projectId }: { projectId: string }) {
     if (deleted.some((n) => n.type === "asset")) reload();
   }
 
-  const center = () =>
-    flow.screenToFlowPosition({ x: window.innerWidth / 2 - 200, y: window.innerHeight / 2 });
+  /** Viewport centre, nudged so repeated adds don't stack exactly on top of each other. */
+  const center = () => {
+    const { x, y } = flow.screenToFlowPosition({
+      x: window.innerWidth / 2 - 200,
+      y: window.innerHeight / 2,
+    });
+    const taken = (px: number, py: number) =>
+      flow
+        .getNodes()
+        .some((n) => Math.abs(n.position.x - px) < 8 && Math.abs(n.position.y - py) < 8);
+    let step = 0;
+    while (taken(x + step * 32, y + step * 32)) step += 1;
+    return { x: x + step * 32, y: y + step * 32 };
+  };
 
   async function addNote() {
     const { x, y } = center();
@@ -319,6 +331,7 @@ function CanvasInner({ projectId }: { projectId: string }) {
             }
             onPaneClick={() => setSelectedAsset(null)}
             nodesConnectable={canEdit}
+            colorMode="system"
             fitView
           >
             <Background />

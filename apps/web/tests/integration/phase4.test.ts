@@ -237,6 +237,20 @@ describe("canvas", () => {
     expect(final).toEqual({ x: 50, version: 2 });
   });
 
+  it("keeps one asset per linked document and one card per asset", async () => {
+    const duplicate = await editor.client.from("assets").insert({
+      project_id: projectId,
+      application: "photoshop",
+      name: "Flyer again",
+      native_locator: { path: "/tmp/p4/flyer.psd" },
+    });
+    expect(duplicate.error?.code).toBe("23505");
+    const card = { project_id: projectId, item_type: "asset", ref_id: assetId };
+    expect((await editor.client.from("canvas_items").insert(card)).error).toBeNull();
+    expect((await editor.client.from("canvas_items").insert(card)).error?.code).toBe("23505");
+    await admin.from("canvas_items").delete().eq("project_id", projectId).eq("ref_id", assetId);
+  });
+
   it("never changes checkpoint ancestry when cards are connected", async () => {
     const { count: before } = await admin
       .from("checkpoint_parents")
