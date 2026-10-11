@@ -1,6 +1,6 @@
 import { type AssetRef, ConnectorError, diffElements, fnv1a64 } from "@sonder/connector-sdk";
 import type { ConnectorJob, Element, PairStartResponse } from "@sonder/contracts";
-import { app, constants, core } from "photoshop";
+import { action, app, constants, core } from "photoshop";
 
 import { type PhotoshopCheckpoint, PhotoshopConnector } from "../connector";
 import { elementKey } from "../core/identity";
@@ -11,6 +11,17 @@ import * as ledger from "./ledger";
 import { connectorFolder, load, save } from "./store";
 
 const TICK_MS = 3000;
+const CHECK_TIMEOUT_MS = 5000;
+
+function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(`Timed out after ${ms} ms`)), ms);
+    promise.then(
+      (value) => (clearTimeout(timer), resolve(value)),
+      (error: unknown) => (clearTimeout(timer), reject(error)),
+    );
+  });
+}
 
 interface StoredSession {
   token: string;
@@ -46,13 +57,20 @@ export function documentPath(doc: { path: string; name: string }): string | unde
 }
 
 function openDocuments() {
-  const docs: Array<{ path: string; name: string; id: number }> = [];
+  const docs: Array<{ path: string; name: string; id: number; saved: boolean }> = [];
   for (let i = 0; i < app.documents.length; i++) {
     const doc = app.documents[i];
     const path = doc && documentPath(doc);
-    if (doc && path) docs.push({ path, name: doc.name, id: doc.id });
+    if (doc && path) docs.push({ path, name: doc.name, id: doc.id, saved: doc.saved });
   }
   return docs;
+}
+
+/** Whether a saved open document differs from its branch head, and what it was compared with. */
+interface ChangeCheck {
+  docId: number;
+  headCheckpointId: string;
+  uncaptured: boolean;
 }
 
 /**
@@ -66,6 +84,11 @@ export class ConnectorRuntime {
   private busy = false;
   private readonly faults = new Set<string>();
   private readonly listeners = new Set<(status: RuntimeStatus) => void>();
+  /** Head of each linked document's active branch, from the last heartbeat (keyed by path). */
+  private heads = new Map<string, string | null>();
+  /** Latest comparison per path; dropped when the document is saved so it is checked again. */
+  private readonly checks = new Map<string, ChangeCheck>();
+  private readonly headElements = new Map<string, Element[]>();
   status: RuntimeStatus = {
     connection: { state: "unpaired" },
     assets: [],
@@ -94,6 +117,8 @@ export class ConnectorRuntime {
       this.update({ connection: { state: "expired", reason: "Session expired; connect again" } });
     }
     setInterval(() => void this.tick(), TICK_MS);
+    // A save changes what is on disk, so recheck it against the branch head.
+    void action.addNotificationListener(["save"], () => this.checks.clear());
   }
 
   async pair() {
@@ -173,12 +198,59 @@ export class ConnectorRuntime {
 
   private async work() {
     const api = this.api()!;
+    const docs = openDocuments();
     const heartbeat = await api.heartbeat(
-      openDocuments().map(({ path, name }) => ({ path, name })),
+      docs.map(({ path, name, id, saved }) => {
+        const check = this.checks.get(path);
+        const current =
+          check && check.docId === id && check.headCheckpointId === this.heads.get(path);
+        return {
+          path,
+          name,
+          unsaved: !saved,
+          ...(saved && current ? { uncaptured: check.uncaptured } : {}),
+        };
+      }),
     );
+    this.heads = new Map(heartbeat.assets.map((a) => [a.path, a.headCheckpointId ?? null]));
     this.update({ assets: heartbeat.assets, error: undefined });
     const { job } = await api.claim();
-    if (job) await this.execute(api, job);
+    if (job) {
+      await this.execute(api, job);
+      this.checks.clear();
+    } else {
+      await this.checkForChanges(api, docs);
+    }
+  }
+
+  /**
+   * Compares saved linked documents with their branch heads, at most one per tick and only when
+   * something changed (a save, a new head, a different open document). Reported on the next tick.
+   */
+  private async checkForChanges(api: SonderApi, docs: ReturnType<typeof openDocuments>) {
+    for (const doc of docs) {
+      const head = this.heads.get(doc.path);
+      if (!doc.saved || !head) continue;
+      const check = this.checks.get(doc.path);
+      if (check && check.docId === doc.id && check.headCheckpointId === head) continue;
+      try {
+        let expected = this.headElements.get(head);
+        if (!expected) {
+          expected = (await api.checkpointElements(head)).elements;
+          this.headElements.set(head, expected);
+        }
+        // Bounded so a read Photoshop never answers cannot stall heartbeats and job claims.
+        const { elements } = await withTimeout(
+          this.connector.readProperties({ id: String(doc.id), name: doc.name }),
+          CHECK_TIMEOUT_MS,
+        );
+        const uncaptured = diffElements(expected, elements, elementKey).length > 0;
+        this.checks.set(doc.path, { docId: doc.id, headCheckpointId: head, uncaptured });
+      } catch {
+        // Photoshop may refuse reads while busy (e.g. editing text); try again next tick.
+      }
+      return;
+    }
   }
 
   private async execute(api: SonderApi, job: ConnectorJob) {

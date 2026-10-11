@@ -1,6 +1,9 @@
 export interface ConnectorStatus {
   online: boolean;
   lastSeenAt: string | null;
+  /** Reported by the connector for the open document; null when offline or unknown. */
+  unsaved: boolean | null;
+  uncaptured: boolean | null;
   capabilities: {
     connectorVersion?: string;
     applicationVersion?: string;

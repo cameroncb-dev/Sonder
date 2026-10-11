@@ -5,6 +5,7 @@ import { useEffect, useRef, useState } from "react";
 import { api, ApiClientError } from "@/lib/api-client";
 
 import { CompareView } from "./compare-view";
+import { changeLabel } from "./nodes";
 import { HistoryGraph } from "./history-graph";
 import { APPLICATION_LABELS, type CanvasAsset, formatValue, type History, type Job } from "./types";
 
@@ -133,6 +134,12 @@ export function Inspector({
 
       <section className="flex flex-col gap-2">
         <h3 className="text-xs font-semibold uppercase tracking-wide text-zinc-500">Capture</h3>
+        {changeLabel(asset) && (
+          <p className="text-xs text-amber-700 dark:text-amber-400">
+            {changeLabel(asset)}
+            {asset.connector.unsaved ? ". Save in the app, then capture." : "."}
+          </p>
+        )}
         <div className="flex gap-2">
           <input
             className="min-w-0 flex-1 rounded border border-zinc-300 px-2 py-1 text-xs dark:border-zinc-700 dark:bg-zinc-900"

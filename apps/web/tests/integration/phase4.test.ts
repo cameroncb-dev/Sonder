@@ -192,6 +192,34 @@ describe("branch-aware history", () => {
     expect(asset.native_locator).toEqual({ path: "/tmp/p4/working/alt.psd" });
   });
 
+  it("records reported document state and returns each asset's branch head", async () => {
+    const rows = await rpc<Array<{ asset_id: string; head_checkpoint_id: string | null }>>(
+      admin,
+      "report_session_documents",
+      {
+        p_session_id: session,
+        p_documents: [
+          { path: "/tmp/p4/working/alt.psd", unsaved: false, uncaptured: true },
+          { path: "/tmp/p4/flyer.psd", unsaved: "yes" },
+        ],
+      },
+    );
+    const altHead = (await branches()).find((b) => b.id === altId)!.head_checkpoint_id;
+    expect(rows.find((r) => r.asset_id === assetId)?.head_checkpoint_id).toBe(altHead);
+    expect(rows.find((r) => r.asset_id === otherAssetId)?.head_checkpoint_id).toBeNull();
+    const { data: state } = await admin
+      .from("session_assets")
+      .select("asset_id,unsaved,uncaptured")
+      .eq("session_id", session);
+    expect(state).toEqual(
+      expect.arrayContaining([
+        { asset_id: assetId, unsaved: false, uncaptured: true },
+        // Non-boolean values are recorded as unknown rather than coerced.
+        { asset_id: otherAssetId, unsaved: null, uncaptured: null },
+      ]),
+    );
+  });
+
   it("rejects an active branch that belongs to another asset", async () => {
     const { error } = await admin
       .from("assets")

@@ -1,8 +1,10 @@
 import {
   CheckpointBeginResponse,
   type CheckpointBeginRequest,
+  CheckpointElementsResponse,
   ClaimResponse,
   type ConnectorManifest,
+  type HeartbeatRequest,
   HeartbeatResponse,
   PairPollResponse,
   PairStartResponse,
@@ -70,11 +72,19 @@ export class SonderApi {
     );
   }
 
-  heartbeat(openDocuments: Array<{ path: string; name: string }>) {
+  heartbeat(openDocuments: HeartbeatRequest["openDocuments"]) {
     return request(
       "/api/connector/heartbeat",
       { token: this.token, json: { openDocuments } },
       HeartbeatResponse,
+    );
+  }
+
+  checkpointElements(checkpointId: string) {
+    return request(
+      `/api/connector/checkpoints/${checkpointId}/elements`,
+      { method: "GET", token: this.token },
+      CheckpointElementsResponse,
     );
   }
 

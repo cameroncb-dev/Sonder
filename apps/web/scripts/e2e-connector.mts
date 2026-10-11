@@ -152,6 +152,7 @@ async function main() {
   const owner = await signedInUser("owner");
   const outsider = await signedInUser("outsider");
   let projectId: string | undefined;
+  const ownDocuments: string[] = [];
   const extraUsers: string[] = [];
   try {
     const created = await owner.api("POST", "/api/projects", { name: "E2E posters" });
@@ -163,6 +164,8 @@ async function main() {
     );
 
     const doc = await trigger("open-fixture");
+    // Close only this run's documents afterwards; other working copies may hold someone's work.
+    if (typeof doc.path === "string") ownDocuments.push(doc.path.replace(/[^/]+$/, ""));
     check("Photoshop opens a saved test document", typeof doc.path === "string", doc.path);
 
     await trigger("pair");
@@ -200,6 +203,7 @@ async function main() {
     );
 
     const asset = await trigger("link", { projectId });
+    ownDocuments.push(`/working/${asset.id}/`);
     check("plugin links the open document as a project asset", !!asset.id, asset.name);
     await waitFor("heartbeat reports the asset", async () =>
       (await pluginStatus()).assets.some((a: { assetId: string }) => a.assetId === asset.id),
@@ -352,7 +356,24 @@ async function main() {
       });
     };
 
+    /** Waits until the canvas reports the given document state for the asset. */
+    const documentState = (unsaved: boolean, uncaptured: boolean | null) =>
+      waitFor(
+        `document state unsaved=${unsaved} uncaptured=${uncaptured}`,
+        async () => {
+          const c = (await owner.api("GET", `/api/projects/${projectId}/canvas`)).body;
+          const status = c.assets.find((a: { id: string }) => a.id === asset.id)?.connector;
+          return status?.unsaved === unsaved && status?.uncaptured === uncaptured;
+        },
+        30_000,
+      ).then(
+        () => true,
+        () => false,
+      );
+    check("canvas reports the captured document as up to date", await documentState(false, false));
+
     await trigger("edit-text", { text: "Unsaved edit" });
+    check("canvas reports unsaved changes after an edit", await documentState(true, null));
     const unsaved = await checkoutJob();
     check(
       "checkout refuses a document with unsaved changes",
@@ -360,6 +381,7 @@ async function main() {
       unsaved.error?.message,
     );
     await trigger("save-active");
+    check("canvas reports uncaptured changes after saving", await documentState(false, true));
     const uncaptured = await checkoutJob();
     check(
       "checkout refuses saved but uncaptured changes",
@@ -602,9 +624,7 @@ async function main() {
     await admin.auth.admin.deleteUser(outsider.id);
     for (const id of extraUsers) await admin.auth.admin.deleteUser(id);
     await trigger("disconnect").catch(() => undefined);
-    await trigger("close-docs", { match: "com.sonder.photoshop/PluginData/" }).catch(
-      () => undefined,
-    );
+    for (const match of ownDocuments) await trigger("close-docs", { match }).catch(() => undefined);
   }
 }
 

@@ -35,6 +35,9 @@ export async function requireAsset(
 export interface ConnectorStatus {
   online: boolean;
   lastSeenAt: string | null;
+  /** Reported by the connector for the open document; null when offline or not yet known. */
+  unsaved: boolean | null;
+  uncaptured: boolean | null;
   /** From the most recent connector manifest seen for this application in the project. */
   capabilities: {
     connectorVersion?: string;
@@ -48,6 +51,9 @@ export interface ConnectorStatus {
  * Connector presence per asset. Session rows are backend-only, so this uses the
  * admin client after the caller has checked project membership.
  */
+const flag = (values: Array<boolean | null>): boolean | null =>
+  values.includes(true) ? true : values.includes(false) ? false : null;
+
 export async function connectorStatus(
   projectId: string,
   assets: AssetRow[],
@@ -59,12 +65,14 @@ export async function connectorStatus(
     ? (unwrap(
         await admin
           .from("session_assets")
-          .select("asset_id,reported_at,connector_sessions(status,expires_at)")
+          .select("asset_id,reported_at,unsaved,uncaptured,connector_sessions(status,expires_at)")
           .in("asset_id", ids)
           .gt("reported_at", since),
       ) as unknown as Array<{
         asset_id: string;
         reported_at: string;
+        unsaved: boolean | null;
+        uncaptured: boolean | null;
         connector_sessions: { status: string; expires_at: string };
       }>)
     : [];
@@ -116,6 +124,9 @@ export async function connectorStatus(
         asset.id,
         {
           online: live.length > 0,
+          // Any session reporting changes wins; otherwise false only if one positively said so.
+          unsaved: flag(live.map((l) => l.unsaved)),
+          uncaptured: flag(live.map((l) => l.uncaptured)),
           lastSeenAt: live[0]?.reported_at ?? manifest?.lastSeenAt ?? null,
           capabilities: manifest
             ? {

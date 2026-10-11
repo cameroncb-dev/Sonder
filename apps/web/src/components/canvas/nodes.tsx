@@ -23,6 +23,15 @@ const handles = (
   </>
 );
 
+/** What the connector reports about the open document, or null when there's nothing to flag. */
+export function changeLabel(asset: CanvasAsset): string | null {
+  const { online, unsaved, uncaptured } = asset.connector;
+  if (!online) return null;
+  if (unsaved) return "Unsaved changes in the app";
+  if (uncaptured) return "Saved changes not captured yet";
+  return null;
+}
+
 export function AssetCard({ data, selected }: NodeProps<AssetNode>) {
   const { asset } = data;
   const operations = asset.connector.capabilities?.operations ?? [];
@@ -60,6 +69,11 @@ export function AssetCard({ data, selected }: NodeProps<AssetNode>) {
           <span className="text-zinc-500">Branch</span>
           <span className="font-mono">{asset.activeBranch?.name ?? "—"}</span>
         </div>
+        {changeLabel(asset) && (
+          <div className="rounded bg-amber-100 px-1.5 py-0.5 text-[11px] text-amber-800 dark:bg-amber-950 dark:text-amber-300">
+            {changeLabel(asset)}
+          </div>
+        )}
         <div className="flex items-center justify-between">
           <span className="text-zinc-500">Connector</span>
           <span className="flex items-center gap-1">
