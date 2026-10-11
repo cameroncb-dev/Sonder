@@ -16,7 +16,7 @@ import {
   useReactFlow,
 } from "@xyflow/react";
 import Link from "next/link";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 
 import { api, ApiClientError } from "@/lib/api-client";
 import { createClient } from "@/lib/supabase/client";
@@ -26,6 +26,21 @@ import { nodeTypes } from "./nodes";
 import type { CanvasData, CanvasItem } from "./types";
 
 const STATUS_REFRESH_MS = 15_000;
+
+const DARK_QUERY = "(prefers-color-scheme: dark)";
+
+/** System theme. The server snapshot is "light"; React re-renders after hydration without a mismatch. */
+function useColorMode(): "light" | "dark" {
+  return useSyncExternalStore(
+    (onChange) => {
+      const query = window.matchMedia(DARK_QUERY);
+      query.addEventListener("change", onChange);
+      return () => query.removeEventListener("change", onChange);
+    },
+    () => (window.matchMedia(DARK_QUERY).matches ? "dark" : "light"),
+    () => "light",
+  );
+}
 
 function toNodes(canvas: CanvasData, onSaveNote: (item: CanvasItem, text: string) => void): Node[] {
   const draggable = canvas.role !== "reviewer";
@@ -80,6 +95,7 @@ function CanvasInner({ projectId }: { projectId: string }) {
   const versions = useRef(new Map<string, number>());
   const fileInput = useRef<HTMLInputElement>(null);
   const flow = useReactFlow();
+  const colorMode = useColorMode();
   const base = `/api/projects/${projectId}`;
   const reload = () => setReloadKey((k) => k + 1);
 
@@ -331,7 +347,7 @@ function CanvasInner({ projectId }: { projectId: string }) {
             }
             onPaneClick={() => setSelectedAsset(null)}
             nodesConnectable={canEdit}
-            colorMode="system"
+            colorMode={colorMode}
             fitView
           >
             <Background />
