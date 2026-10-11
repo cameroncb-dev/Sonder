@@ -1119,6 +1119,97 @@ async function main() {
       [reopenJob.status, flyerBranch?.name, reopenJob.error?.message],
     );
 
+    // --- Phase 8: AI suggestions and board organizing (real Gemini; skipped when AI is off) ---
+    const ai = (await owner.api("GET", "/api/ai/status")).body;
+    if (!ai.enabled) {
+      console.log(`SKIP  AI checks: ${ai.reason ?? "AI is off"}`);
+    } else {
+      const suggestionsUrl = `/api/projects/${projectId}/assets/${flyer.id}/suggestions`;
+      const asked = await owner.api("POST", suggestionsUrl, { hint: "warmer, for a jazz night" });
+      type Idea = {
+        title: string;
+        rationale: string;
+        changes: Array<{ elementKey: string; property: string; to: unknown }>;
+      };
+      const ideas = (asked.body.suggestions ?? []) as Idea[];
+      check(
+        "Gemini suggests directions limited to real, editable layers",
+        asked.status === 200 &&
+          ideas.length > 0 &&
+          ideas.every((i) => i.changes.length > 0 && i.changes.every((c) => !!c.elementKey)),
+        asked.status === 200 ? ideas.map((i) => i.title) : asked.body,
+      );
+
+      const idea = ideas[0];
+      if (idea) {
+        const { data: before } = await admin
+          .from("assets")
+          .select("active_branch_id,branches!assets_active_branch_fk(head_checkpoint_id)")
+          .eq("id", flyer.id)
+          .single();
+        const tried = await owner.api("POST", `${suggestionsUrl}/try`, {
+          title: idea.title,
+          rationale: idea.rationale,
+          changes: idea.changes,
+        });
+        const proposalId = tried.body.proposal?.id as string | undefined;
+        type Tried = { id: string; status: string; candidateCheckpointId: string | null };
+        const built = await waitFor(
+          "the suggestion to be built",
+          async () => {
+            const list = (await owner.api("GET", suggestionsUrl)).body.suggestions as Tried[];
+            const s = list?.find((x) => x.id === proposalId);
+            return s && s.status !== "preparing" ? s : undefined;
+          },
+          120_000,
+        );
+        check(
+          "trying a suggestion builds a candidate in the app",
+          tried.status === 201 && built.status === "ready" && !!built.candidateCheckpointId,
+          built.status,
+        );
+
+        const kept = await owner.api(
+          "POST",
+          `/api/projects/${projectId}/proposals/${proposalId}/keep`,
+          { candidateCheckpointId: built.candidateCheckpointId, branchName: `AI: ${idea.title}` },
+        );
+        const { data: after } = await admin
+          .from("assets")
+          .select("active_branch_id,branches!assets_active_branch_fk(head_checkpoint_id)")
+          .eq("id", flyer.id)
+          .single();
+        check(
+          "keeping a suggestion adds a branch at that candidate and moves no existing branch",
+          kept.status === 200 &&
+            kept.body.branch?.head_checkpoint_id === built.candidateCheckpointId &&
+            after?.active_branch_id === before?.active_branch_id &&
+            JSON.stringify(after?.branches) === JSON.stringify(before?.branches),
+          kept.body,
+        );
+      }
+
+      const organized = await owner.api("POST", `/api/projects/${projectId}/canvas/organize`, {});
+      type Plan = {
+        moves: Array<{ itemId: string }>;
+        groups: Array<{ title: string; cards: string[] }>;
+      };
+      const plan = organized.body.plan as Plan | undefined;
+      const { data: boardItems } = await admin
+        .from("canvas_items")
+        .select("id")
+        .eq("project_id", projectId);
+      const boardIds = new Set((boardItems ?? []).map((i) => i.id));
+      check(
+        "Gemini groups the board and every card gets exactly one place",
+        organized.status === 200 &&
+          !!plan?.groups.length &&
+          plan.moves.every((m) => boardIds.has(m.itemId)) &&
+          new Set(plan.moves.map((m) => m.itemId)).size === plan.moves.length,
+        organized.status === 200 ? plan?.groups.map((g) => g.title) : organized.body,
+      );
+    }
+
     // --- Routing: a job for a document that is not open is not delivered ---
     const closedAsset = await owner.api("POST", `/api/projects/${projectId}/assets`, {
       name: "Closed",
