@@ -21,7 +21,7 @@ import {
 const JOB_LABELS: Record<string, string> = {
   captureCheckpoint: "Capture",
   openCheckpoint: "Switch branch",
-  createCandidate: "Build combination",
+  createCandidate: "Build candidate",
 };
 
 function jobSummary(job: Job): string {

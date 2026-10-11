@@ -21,6 +21,8 @@ export function devActions(
       await runtime.pair();
       return runtime.status.connection;
     },
+    "stash-session": () => runtime.stashSession(),
+    "restore-session": () => runtime.restoreSession(),
     disconnect: async () => {
       await runtime.disconnect();
       return runtime.status.connection;
@@ -114,8 +116,9 @@ export function devActions(
       return runtime.linkActiveDocument(command.projectId);
     },
     fault: async (command: TriggerCommand) => {
-      if (command.stage !== "before-finalize") throw new Error("Unknown fault stage");
-      runtime.injectFault("before-finalize");
+      if (command.stage !== "before-finalize" && command.stage !== "fail-candidate")
+        throw new Error("Unknown fault stage");
+      runtime.injectFault(command.stage);
       return { armed: command.stage };
     },
     status: async () => runtime.status,

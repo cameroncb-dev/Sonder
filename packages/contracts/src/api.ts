@@ -29,6 +29,9 @@ export const PairPollResponse = z.discriminatedUnion("status", [
     status: z.literal("active"),
     token: z.string().min(32),
     expiresAt: z.iso.datetime(),
+    /** Single-use; exchange at /api/connector/refresh before the access token expires. */
+    refreshToken: z.string().min(32).optional(),
+    refreshExpiresAt: z.iso.datetime().optional(),
     user: z.object({ id: z.uuid(), email: z.string().optional() }),
   }),
 ]);
@@ -91,6 +94,15 @@ export const CheckpointElementsResponse = z.object({
   elements: z.array(Element),
 });
 export type CheckpointElementsResponse = z.infer<typeof CheckpointElementsResponse>;
+
+export const RefreshRequest = z.object({ refreshToken: z.string().min(32).max(200) });
+export const RefreshResponse = z.object({
+  token: z.string().min(32),
+  expiresAt: z.iso.datetime(),
+  refreshToken: z.string().min(32),
+  refreshExpiresAt: z.iso.datetime(),
+});
+export type RefreshResponse = z.infer<typeof RefreshResponse>;
 
 export const LinkAssetRequest = z.object({
   projectId: z.uuid(),

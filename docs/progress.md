@@ -1,5 +1,135 @@
 # Progress
 
+## Phase 6 — Shared Themes, Project Directions and Canvas Additions
+
+Status: **complete, pending the user's check of directions.** Every acceptance criterion is
+verified end to end against the hosted project with real Photoshop. Branch:
+`phase-6-themes-canvas`.
+
+Scope (from `Design_Plan.md` §15, plus canvas additions the user requested on 2026-10-11):
+
+1. **Canvas additions (first, then a check-in with the user):**
+   - styled notes (shape, color, font chosen before placing);
+   - free text anywhere;
+   - resizable sections that carry their cards;
+   - a font picker (system fonts plus about 50 Google Fonts, loaded on demand).
+2. **Shared themes:** primary, background, text and accent color roles; explicit role-to-layer
+   mappings per asset; per-asset candidates and previews; inclusion and exclusion; approval
+   of the collection; per-asset status; visible partial failures.
+3. **Directions:** named collections of exact checkpoints that stay stable as branches move.
+
+### Part 1 — canvas additions: built, awaiting the user's check
+
+- **Left toolbox** (`toolbox.tsx`) with collapsible Notes, Text, Sections and References
+  panels, toggled by a waffle button in the header. Visibility, open panels and chosen styles
+  are remembered per browser. **Add note** and **Add reference** moved here from the header.
+- **Place by clicking:** choose a style, click **Place …**, then click the canvas (crosshair
+  cursor; Esc cancels). The new card's text takes focus.
+- **Notes:** sticky, rounded, circle and diamond shapes; 7 colors; any font.
+- **Text:** small, medium and heading sizes; 7 colors; any font; grows with its content.
+- **Sections:** titled, tinted, resizable (corner handles), drawn beneath cards. Dragging a
+  section carries the cards whose centre lies inside it. Deleting a section leaves its cards.
+- **Restyle later:** a selected note, text or section shows a floating style bar.
+- **Fonts:** 12 system fonts and 55 Google Fonts. The picker shows each name in its own
+  typeface (one subset request). A font downloads in full only when used.
+- **Saving:** every change carries the card's version (optimistic concurrency). Multi-card
+  drags save every moved card.
+- **Server:** migration `20261015000000_canvas_text_and_sections.sql` adds the `text` and
+  `section` item types. The API validates content per type (shapes, colors, sizes, known
+  fonts); old notes get default styles.
+- **Checks:** unit 10/10 (content rules, all fonts), integration 35/35, E2E all passed (2
+  new: styled cards round-trip; unknown fonts and shapes refused; section resize persists),
+  typecheck, lint, build.
+- **Not verified automatically:** how it looks in a browser, placement clicks, and sections
+  carrying cards while dragged (client-side logic). These are for the user's check.
+
+### Part 2 — shared themes: built and verified, awaiting the user's check
+
+- **Themes** (name + primary, background, text and accent colors) are created from the
+  toolbox's Themes section and placed as canvas cards. Clicking one opens the theme panel.
+- **Mappings:** per document, choose which text or solid-fill layer takes which theme color.
+  Layers get named element roles (`asset_elements`, e.g. `headline`), and `theme_mappings`
+  links color role → element role → property.
+- **Checked before running** (`src/server/themes.ts`, `planTheme`). Each document is judged
+  on its own: mappings exist; it has been captured; the connector can build candidates; the
+  color mode is supported (RGB); each mapped layer still exists, has the right kind and is
+  editable; colors already equal are skipped. Results: ready / already matches / no layers
+  mapped / can't apply (with reasons).
+- **Apply** creates a `coordinated_update` proposal with one item per document. Chosen
+  documents get a `createCandidate` job (the same plugin path as Phase 5). Unchosen or
+  unsupported ones are recorded as excluded, with the reason.
+- **Partial failure:** the proposal's status comes from its items (`refresh_proposal_status`):
+  preparing / ready / partially_failed / failed / finalized, and never complete while an
+  included document has failed. A failed document can be retried on its own
+  (`retry_proposal_item`).
+- **Approval** (`approve_proposal_items`) finalizes exactly the reviewed candidates, each on
+  its own branch by compare-and-swap. A document whose branch moved fails alone (STALE).
+  Ready documents not chosen are excluded.
+- **Also in this part:** a popup for reference images over 20 MB (or of the wrong type),
+  checked before uploading.
+- **Checks:** unit 15/15 (5 planner tests), integration 40/40 (5 new: exclusions, never
+  complete while partial, per-item approval, isolated retry, stale branch fails only its
+  item), and an E2E pass with 7 new checks. Those use two real Photoshop documents, one
+  theme and a forced failure, and confirm the themed colors in both manifests and that the
+  previous versions are kept.
+
+### Part 3 — directions: built and verified
+
+- **Save** from the toolbox's Directions section: a name and optional description, then
+  **Choose versions…** picks one exact version per document (default: the active branch's
+  newest version; documents can be left out), then a click on the canvas places the card.
+  The card shows a thumbnail per document.
+- **Stable:** `create_direction` (migration `20261015000200_directions.sql`) pins finalized
+  checkpoints only, never unapproved candidates. Entries are immutable (the Phase 3 trigger).
+  Deleting a document removes just its entry instead of blocking the deletion.
+- **Inspect:** the direction panel lists each document's pinned version with its preview and
+  whether that document has moved on since.
+- **Reopen** ("Open all", or per document) switches each document to a branch at the pinned
+  version. It reuses the active branch or any branch already there; otherwise it creates a
+  branch named after the direction. It goes through the same switch job and safety checks as
+  Switch (shared `src/server/checkout.ts`).
+- **Delete** directions and themes from their panel, or with the Delete key, after a popup.
+- **Checks:** integration 43/43 (3 new: stable as branches move, entries can't be edited,
+  unapproved candidates refused, deleting a document drops only its entry). E2E all passed;
+  2 new checks confirm a direction keeps its versions after one document moves on, and that
+  reopening opens the exact saved version on a "Forest launch" branch.
+
+### Connection fixes (found while testing)
+
+- **Disconnect now revokes on the server.** `POST /api/connector/disconnect` marks the
+  session `revoked`; the plugin calls it on Disconnect. Before, disconnecting only made the
+  plugin forget its token, which stayed valid until it expired (12 h). E2E check: a token
+  works, is revoked, then gets 401.
+- **Remembered connections** (migration `20261016000000_connector_refresh_tokens.sql`).
+  - Pairing issues a 1-hour access token plus a single-use refresh token (stored hashed,
+    30-day sliding limit). The plugin swaps it for a new pair 10 minutes before the access
+    token expires, on startup, and once when a request reports `TOKEN_EXPIRED`.
+  - `POST /api/connector/refresh` rotates both tokens with a conditional update, so each
+    refresh token works once and revoked sessions can't renew.
+  - Users pair again only after Disconnect or 30 days unused (the user's choice).
+  - E2E: an expired access token renews and the panel stays active; a lapsed connection asks
+    to pair; after Disconnect, both the token and the refresh are rejected. Verified with the
+    user's own connection: refresh stored, remembered until 2026-11-10.
+- **Test runs no longer sign the user's panel out.** The E2E stashes the panel's own
+  connection before pairing as a test user and restores it afterwards (dev actions
+  `stash-session` / `restore-session`). Verified: the panel was still connected, and its
+  heartbeats were accepted, after a full run.
+
+### Acceptance criteria
+
+| Criterion                                                 | Evidence                                                                                                                          |
+| --------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| One theme updates two documents through explicit mappings | E2E: both manifests have the theme's background and text colors after approval                                                    |
+| Each result remains recoverable                           | E2E: each themed version's parent is the previous version, which stays finalized                                                  |
+| A direction retrieves the intended checkpoint collection  | E2E: entries equal the pinned versions after a document moves on; reopening opens them                                            |
+| Partial failures are visible                              | E2E: forced failure → "partially_failed"; approving the rest keeps it incomplete; retry completes                                 |
+| Unsupported assets cannot receive incompatible operations | Planner tests (non-RGB, missing or wrong-kind layer, no connector) mark them "Can't apply"; they are excluded and never get a job |
+
+Notes:
+
+- Google Fonts are fetched from Google's servers by each viewer's browser when a font is
+  first shown. System fonts need no download.
+
 ## Phase 5 — Selective Combination and Approval
 
 Status: **complete, pending your interactive test.** Every acceptance criterion is verified end

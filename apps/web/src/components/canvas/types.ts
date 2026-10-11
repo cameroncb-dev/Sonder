@@ -24,7 +24,7 @@ export interface CanvasAsset {
 
 export interface CanvasItem {
   id: string;
-  item_type: "asset" | "reference" | "note" | "direction" | "theme";
+  item_type: "asset" | "reference" | "note" | "text" | "section" | "direction" | "theme";
   ref_id: string | null;
   x: number;
   y: number;
@@ -48,6 +48,88 @@ export interface CanvasData {
   assets: CanvasAsset[];
   items: CanvasItem[];
   connections: CanvasConnection[];
+  themes: CanvasTheme[];
+  directions: CanvasDirection[];
+}
+
+export interface CanvasDirection {
+  id: string;
+  name: string;
+  description: string | null;
+  previews: Array<{ assetId: string; url: string | null }>;
+}
+
+export interface DirectionDetail {
+  role: CanvasData["role"];
+  direction: { id: string; name: string; description: string | null; createdAt: string };
+  entries: Array<{
+    assetId: string;
+    assetName: string;
+    checkpointId: string;
+    message: string | null;
+    createdAt: string | null;
+    previewUrl: string | null;
+    activeBranch: string | null;
+    isCurrent: boolean;
+  }>;
+}
+
+export type ColorRole = "primary" | "background" | "text" | "accent";
+export const COLOR_ROLES: ColorRole[] = ["primary", "background", "text", "accent"];
+
+export interface CanvasTheme {
+  id: string;
+  name: string;
+  colors: Record<ColorRole, string>;
+}
+
+export interface ThemePlan {
+  assetId: string;
+  name: string;
+  branchName: string | null;
+  checkpointId: string | null;
+  status: "ready" | "no_changes" | "no_mappings" | "unsupported";
+  reasons: string[];
+  changes: Array<{ element: string; role: ColorRole; property: string; from?: string; to: string }>;
+}
+
+export interface ThemeDetail {
+  role: CanvasData["role"];
+  theme: CanvasTheme;
+  assets: Array<{
+    id: string;
+    name: string;
+    branchName: string | null;
+    colorMode: string | null;
+    elements: Array<{
+      key: string;
+      native: Element["native"];
+      name: string;
+      kind: string;
+      editable: boolean;
+      color?: unknown;
+      colorRole: ColorRole | null;
+    }>;
+  }>;
+  plans: ThemePlan[];
+}
+
+export interface ThemeUpdate {
+  id: string;
+  status: Proposal["status"];
+  createdAt: string;
+  approvedAt: string | null;
+  request: { themeName: string; colors: Record<ColorRole, string> };
+  items: Array<{
+    id: string;
+    assetId: string;
+    assetName: string;
+    status: "pending" | "running" | "ready" | "approved" | "finalized" | "failed" | "excluded";
+    outcome: { reason?: string; error?: Job["error"] } | null;
+    candidateCheckpointId: string | null;
+    candidatePreviewUrl: string | null;
+    beforePreviewUrl: string | null;
+  }>;
 }
 
 export interface Element {

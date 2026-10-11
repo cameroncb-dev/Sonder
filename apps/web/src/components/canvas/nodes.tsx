@@ -1,27 +1,15 @@
 "use client";
 
-import { Handle, type Node, type NodeProps, Position } from "@xyflow/react";
-import { useState } from "react";
+import { type Node, type NodeProps } from "@xyflow/react";
 
+import { NoteCard, SectionCard, TextCard } from "./canvas-cards";
+import { handles } from "./handles";
+import { DirectionCard } from "./direction-panel";
+import { ThemeCard } from "./theme-panel";
 import { APPLICATION_LABELS, type CanvasAsset, OPERATION_LABELS } from "./types";
 
 export type AssetNode = Node<{ asset: CanvasAsset; selected?: boolean }, "asset">;
-export type NoteNode = Node<
-  { text: string; editable: boolean; onSave: (text: string) => void },
-  "note"
->;
 export type ReferenceNode = Node<{ name: string; url: string | null }, "reference">;
-
-const HANDLE =
-  "!h-3.5 !w-3.5 !border-2 !border-white !bg-blue-500 transition-transform hover:!scale-150 dark:!border-zinc-900";
-
-const handles = (
-  <>
-    {/* Large enough to find and grab; drag from one card's dot to another's to connect them. */}
-    <Handle type="target" position={Position.Left} className={HANDLE} title="Connect" />
-    <Handle type="source" position={Position.Right} className={HANDLE} title="Drag to connect" />
-  </>
-);
 
 /** What the connector reports about the open document, or null when there's nothing to flag. */
 export function changeLabel(asset: CanvasAsset): string | null {
@@ -103,25 +91,6 @@ export function AssetCard({ data, selected }: NodeProps<AssetNode>) {
   );
 }
 
-export function NoteCard({ data, selected }: NodeProps<NoteNode>) {
-  const [text, setText] = useState(data.text);
-  return (
-    <div
-      className={`w-56 rounded-lg border bg-amber-50 p-2 shadow-sm dark:bg-amber-950 ${selected ? "border-amber-500" : "border-amber-200 dark:border-amber-900"}`}
-    >
-      {handles}
-      <textarea
-        className="nodrag h-28 w-full resize-none bg-transparent text-sm outline-none"
-        value={text}
-        readOnly={!data.editable}
-        placeholder="Note"
-        onChange={(e) => setText(e.target.value)}
-        onBlur={() => text !== data.text && data.onSave(text)}
-      />
-    </div>
-  );
-}
-
 export function ReferenceCard({ data, selected }: NodeProps<ReferenceNode>) {
   return (
     <div
@@ -139,4 +108,12 @@ export function ReferenceCard({ data, selected }: NodeProps<ReferenceNode>) {
   );
 }
 
-export const nodeTypes = { asset: AssetCard, note: NoteCard, reference: ReferenceCard };
+export const nodeTypes = {
+  asset: AssetCard,
+  note: NoteCard,
+  text: TextCard,
+  section: SectionCard,
+  reference: ReferenceCard,
+  theme: ThemeCard,
+  direction: DirectionCard,
+};

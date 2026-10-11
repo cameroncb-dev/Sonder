@@ -168,6 +168,8 @@ async function main() {
     if (typeof doc.path === "string") ownDocuments.push(doc.path.replace(/[^/]+$/, ""));
     check("Photoshop opens a saved test document", typeof doc.path === "string", doc.path);
 
+    // Keep the panel's own connection safe while the test pairs as a test user.
+    await trigger("stash-session");
     await trigger("pair");
     const pairing = await pluginStatus();
     const code = pairing.connection.code as string;
@@ -523,6 +525,64 @@ async function main() {
       persisted?.x === 640 && persisted?.y === 360 && persisted?.version === 2,
     );
 
+    // --- Phase 6 canvas additions: styled notes, free text, sections ---
+    const itemsUrl = `/api/projects/${projectId}/canvas/items`;
+    const styled = await owner.api("POST", itemsUrl, {
+      itemType: "note",
+      x: 900,
+      y: 100,
+      content: { text: "Diamond", shape: "diamond", color: "purple", font: "Playfair Display" },
+    });
+    const freeText = await owner.api("POST", itemsUrl, {
+      itemType: "text",
+      x: 900,
+      y: 400,
+      content: { text: "Launch ideas", font: "Bebas Neue", size: "heading", color: "blue" },
+    });
+    const section = await owner.api("POST", itemsUrl, {
+      itemType: "section",
+      x: 850,
+      y: 50,
+      content: { title: "Moodboard", color: "green" },
+    });
+    const badFont = await owner.api("POST", itemsUrl, {
+      itemType: "text",
+      x: 0,
+      y: 0,
+      content: { text: "x", font: "Not A Font" },
+    });
+    const badShape = await owner.api("PATCH", `${itemsUrl}/${styled.body.item?.id}`, {
+      version: styled.body.item?.version,
+      content: { text: "x", shape: "hexagon" },
+    });
+    const resized = await owner.api("PATCH", `${itemsUrl}/${section.body.item?.id}`, {
+      version: section.body.item?.version,
+      width: 900,
+      height: 600,
+    });
+    const afterReload = (await owner.api("GET", `/api/projects/${projectId}/canvas`)).body;
+    const byId = (id: string) => afterReload.items.find((i: { id: string }) => i.id === id);
+    check(
+      "styled notes, free text and sections save and reload with their style",
+      styled.status === 201 &&
+        freeText.status === 201 &&
+        section.status === 201 &&
+        byId(styled.body.item.id)?.content.shape === "diamond" &&
+        byId(styled.body.item.id)?.content.font === "Playfair Display" &&
+        byId(freeText.body.item.id)?.content.size === "heading" &&
+        byId(section.body.item.id)?.content.title === "Moodboard",
+      [styled.status, freeText.status, section.status],
+    );
+    check(
+      "unknown fonts and shapes are refused; a resized section keeps its size",
+      badFont.status === 400 &&
+        badShape.status === 400 &&
+        resized.status === 200 &&
+        byId(section.body.item.id)?.width === 900 &&
+        byId(section.body.item.id)?.height === 600,
+      [badFont.status, badShape.status, resized.status],
+    );
+
     const parentCount = async () =>
       (
         await admin
@@ -801,6 +861,264 @@ async function main() {
       nothing.body.error?.code,
     );
 
+    // --- Phase 6: one theme across two documents, with a partial failure ---
+    const second = await trigger("open-fixture");
+    if (typeof second.path === "string") ownDocuments.push(second.path.replace(/[^/]+$/, ""));
+    const flyer = await trigger("link", { projectId });
+    ownDocuments.push(`/working/${flyer.id}/`);
+    await waitFor("heartbeat maps the second document", async () =>
+      (await pluginStatus()).assets.some((a: { assetId: string }) => a.assetId === flyer.id),
+    );
+    const flyerCapture = await owner.api(
+      "POST",
+      `/api/projects/${projectId}/assets/${flyer.id}/capture`,
+      { message: "Flyer first version" },
+    );
+    await waitJob(owner.api, flyerCapture.body.job.id, "succeeded");
+
+    const themeColors = {
+      primary: "#123456",
+      background: "#2E7D32",
+      text: "#FFF8E1",
+      accent: "#FFB300",
+    };
+    const themeRes = await owner.api("POST", `/api/projects/${projectId}/themes`, {
+      name: "Forest",
+      colors: themeColors,
+      x: 1200,
+      y: 100,
+    });
+    const themeUrl = `/api/projects/${projectId}/themes/${themeRes.body.theme?.id}`;
+    type Mappable = { native: unknown; name: string };
+    const detail = (await owner.api("GET", themeUrl)).body;
+    for (const doc of [asset.id, flyer.id] as string[]) {
+      const elements = detail.assets.find((a: { id: string }) => a.id === doc)
+        .elements as Mappable[];
+      await owner.api("PUT", `${themeUrl}/mappings/${doc}`, {
+        elements: elements.map((e) => ({
+          native: e.native,
+          colorRole:
+            e.name === "Background Color" ? "background" : e.name === "Headline" ? "text" : null,
+        })),
+      });
+    }
+    const planned = (await owner.api("GET", themeUrl)).body.plans as Array<{
+      assetId: string;
+      status: string;
+    }>;
+    check(
+      "a theme maps to layers of two documents, each checked before running",
+      themeRes.status === 201 &&
+        [asset.id, flyer.id].every(
+          (id) => planned.find((p) => p.assetId === id)?.status === "ready",
+        ),
+      planned.map((p) => p.status),
+    );
+
+    const headsBefore = Object.fromEntries(
+      await Promise.all(
+        [asset.id, flyer.id].map(async (id: string) => [
+          id,
+          (
+            await admin
+              .from("assets")
+              .select("branches!assets_active_branch_fk(head_checkpoint_id)")
+              .eq("id", id)
+              .single()
+          ).data?.branches as unknown as { head_checkpoint_id: string },
+        ]),
+      ),
+    );
+    await trigger("fault", { stage: "fail-candidate" });
+    const applied = await owner.api("POST", `${themeUrl}/apply`, {
+      assetIds: [asset.id, flyer.id],
+    });
+    type Update = {
+      id: string;
+      status: string;
+      items: Array<{ id: string; assetId: string; status: string; candidateCheckpointId: string }>;
+    };
+    const settled = async () =>
+      waitFor(
+        "theme candidates to settle",
+        async () => {
+          const u = (await owner.api("GET", `${themeUrl}/proposals`)).body.proposals?.[0] as Update;
+          return u && u.status !== "preparing" ? u : undefined;
+        },
+        180_000,
+      );
+    const partial = await settled();
+    const failedItem = partial.items.find((i) => i.status === "failed");
+    const readyItem = partial.items.find((i) => i.status === "ready");
+    check(
+      "a failure in one document is visible and does not block the other",
+      applied.status === 201 &&
+        partial.status === "partially_failed" &&
+        !!failedItem &&
+        !!readyItem,
+      partial.items.map((i) => i.status),
+    );
+
+    const firstApproval = await owner.api(
+      "POST",
+      `/api/projects/${projectId}/proposals/${partial.id}/approve-items`,
+      {
+        items: [{ itemId: readyItem?.id, candidateCheckpointId: readyItem?.candidateCheckpointId }],
+      },
+    );
+    check(
+      "approving the successful document keeps the update marked incomplete",
+      firstApproval.status === 200 && firstApproval.body.proposal?.status === "partially_failed",
+      firstApproval.body.proposal?.status,
+    );
+
+    await owner.api(
+      "POST",
+      `/api/projects/${projectId}/proposals/${partial.id}/items/${failedItem?.id}/retry`,
+    );
+    const retried = await settled();
+    const retriedItem = retried.items.find((i) => i.id === failedItem?.id);
+    const secondApproval = await owner.api(
+      "POST",
+      `/api/projects/${projectId}/proposals/${partial.id}/approve-items`,
+      {
+        items: [
+          { itemId: retriedItem?.id, candidateCheckpointId: retriedItem?.candidateCheckpointId },
+        ],
+      },
+    );
+    check(
+      "the failed document is retried on its own and the update completes",
+      retriedItem?.status === "ready" && secondApproval.body.proposal?.status === "finalized",
+      [retriedItem?.status, secondApproval.body.proposal?.status],
+    );
+
+    type ManifestEl = { name: string; properties: Array<{ type: string; value: unknown }> };
+    const themed = await Promise.all(
+      [asset.id, flyer.id].map(async (id: string) => {
+        const { data } = await admin
+          .from("assets")
+          .select("branches!assets_active_branch_fk(head_checkpoint_id)")
+          .eq("id", id)
+          .single();
+        const headId = (data?.branches as unknown as { head_checkpoint_id: string })
+          .head_checkpoint_id;
+        const { data: cp } = await admin
+          .from("checkpoints")
+          .select("manifest")
+          .eq("id", headId)
+          .single();
+        const { data: parents } = await admin
+          .from("checkpoint_parents")
+          .select("parent_id")
+          .eq("checkpoint_id", headId);
+        const els = cp?.manifest.elements as ManifestEl[];
+        const value = (name: string, type: string) =>
+          els.find((e) => e.name === name)?.properties.find((p) => p.type === type)?.value;
+        return {
+          background: value("Background Color", "fill.color"),
+          headline: value("Headline", "text.color"),
+          parent: parents?.[0]?.parent_id,
+          before: headsBefore[id]?.head_checkpoint_id,
+        };
+      }),
+    );
+    check(
+      "one theme updated both documents through their mappings",
+      themed.every(
+        (t) => t.background === themeColors.background && t.headline === themeColors.text,
+      ),
+      themed.map((t) => [t.background, t.headline]),
+    );
+    const { data: previous } = await admin
+      .from("checkpoints")
+      .select("id,status")
+      .in(
+        "id",
+        themed.map((t) => t.before),
+      );
+    check(
+      "each themed result builds on, and keeps, the version before it",
+      themed.every((t) => t.parent === t.before) &&
+        previous?.length === 2 &&
+        previous.every((p) => p.status === "finalized"),
+    );
+
+    // --- Phase 6: directions pin exact versions and reopen them ---
+    const pinnedVersions = Object.fromEntries(
+      await Promise.all(
+        [asset.id, flyer.id].map(async (id: string) => {
+          const { data } = await admin
+            .from("assets")
+            .select("branches!assets_active_branch_fk(head_checkpoint_id)")
+            .eq("id", id)
+            .single();
+          return [
+            id,
+            (data?.branches as unknown as { head_checkpoint_id: string }).head_checkpoint_id,
+          ];
+        }),
+      ),
+    ) as Record<string, string>;
+    const savedDirection = await owner.api("POST", `/api/projects/${projectId}/directions`, {
+      name: "Forest launch",
+      description: "Both documents in the forest theme",
+      entries: Object.entries(pinnedVersions).map(([assetId, checkpointId]) => ({
+        assetId,
+        checkpointId,
+      })),
+      x: 1200,
+      y: 500,
+    });
+    const directionUrl = `/api/projects/${projectId}/directions/${savedDirection.body.direction?.id}`;
+
+    // The flyer moves on after the direction was saved.
+    const moveOn = await owner.api(
+      "POST",
+      `/api/projects/${projectId}/assets/${flyer.id}/capture`,
+      {
+        message: "Flyer after the direction",
+      },
+    );
+    await waitJob(owner.api, moveOn.body.job.id, "succeeded");
+    const directionView = (await owner.api("GET", directionUrl)).body;
+    type Entry = { assetId: string; checkpointId: string; isCurrent: boolean };
+    const flyerEntry = (directionView.entries as Entry[] | undefined)?.find(
+      (e) => e.assetId === flyer.id,
+    );
+    check(
+      "a direction keeps the exact versions it was saved with as branches move on",
+      savedDirection.status === 201 &&
+        (directionView.entries as Entry[]).every(
+          (e) => e.checkpointId === pinnedVersions[e.assetId],
+        ) &&
+        flyerEntry?.isCurrent === false,
+      directionView.entries?.map((e: Entry) => e.isCurrent),
+    );
+
+    const reopened = await owner.api("POST", `${directionUrl}/open`, { assetIds: [flyer.id] });
+    const reopenJob = await waitFor("reopening the direction", async () => {
+      const j = await owner.api("GET", `/api/jobs/${reopened.body.opened?.[0]?.jobId}`);
+      return ["succeeded", "failed"].includes(j.body.job?.status) ? j.body.job : undefined;
+    });
+    const { data: flyerNow } = await admin
+      .from("assets")
+      .select("branches!assets_active_branch_fk(name,head_checkpoint_id)")
+      .eq("id", flyer.id)
+      .single();
+    const flyerBranch = flyerNow?.branches as unknown as {
+      name: string;
+      head_checkpoint_id: string;
+    };
+    check(
+      "reopening a direction opens the saved version on its own branch",
+      reopenJob.status === "succeeded" &&
+        reopenJob.result?.checkpointId === pinnedVersions[flyer.id] &&
+        flyerBranch.name === "Forest launch" &&
+        flyerBranch.head_checkpoint_id === pinnedVersions[flyer.id],
+      [reopenJob.status, flyerBranch?.name, reopenJob.error?.message],
+    );
+
     // --- Routing: a job for a document that is not open is not delivered ---
     const closedAsset = await owner.api("POST", `/api/projects/${projectId}/assets`, {
       name: "Closed",
@@ -852,6 +1170,66 @@ async function main() {
         !outsiderFile,
       [outsiderAssets.status, outsiderJob.status, outsiderRead.status],
     );
+    // A connection made and ended directly over HTTP: disconnecting revokes it on the server.
+    const json = (path: string, body: unknown, token?: string) =>
+      fetch(`${BASE}${path}`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          ...(token ? { authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify(body),
+      });
+    const started = await (
+      await json("/api/connector/pair/start", {
+        manifest: {
+          application: "photoshop",
+          connectorVersion: "0.3.0",
+          assetTypes: ["psd"],
+          operations: ["reportStatus"],
+          elementKinds: [],
+          previewFormats: ["image/png"],
+          runtime: {},
+          limitations: [],
+        },
+      })
+    ).json();
+    await owner.api("POST", "/api/connector/pair/approve", { code: started.code });
+    const paired = await (
+      await json("/api/connector/pair/poll", {
+        sessionId: started.sessionId,
+        pollSecret: started.pollSecret,
+      })
+    ).json();
+    const beat = async () =>
+      (await json("/api/connector/heartbeat", { openDocuments: [] }, paired.token)).status;
+    const beforeDisconnect = await beat();
+    const disconnected = await json("/api/connector/disconnect", {}, paired.token);
+    const afterDisconnect = await beat();
+    const renewAfterDisconnect = await json("/api/connector/refresh", {
+      refreshToken: paired.refreshToken,
+    });
+    const { data: revoked } = await admin
+      .from("connector_sessions")
+      .select("status")
+      .eq("id", started.sessionId)
+      .single();
+    check(
+      "disconnecting revokes the connection and its renewal on the server",
+      beforeDisconnect === 200 &&
+        disconnected.status === 204 &&
+        afterDisconnect === 401 &&
+        renewAfterDisconnect.status === 401 &&
+        revoked?.status === "revoked",
+      [
+        beforeDisconnect,
+        disconnected.status,
+        afterDisconnect,
+        renewAfterDisconnect.status,
+        revoked?.status,
+      ],
+    );
+
     const fake = await fetch(`${BASE}/api/connector/jobs/claim`, {
       method: "POST",
       headers: { authorization: "Bearer not-a-token" },
@@ -865,13 +1243,47 @@ async function main() {
       [fake.status, anonRpc.error?.code, userRpc.error?.code],
     );
 
-    // --- Token expiry ---
+    // --- Token expiry: remembered connections renew; ended ones ask to pair again ---
+    const tokenHash = async () =>
+      (
+        await admin
+          .from("connector_sessions")
+          .select("token_hash,expires_at,status")
+          .eq("id", session!.id)
+          .single()
+      ).data!;
+    const beforeExpiry = await tokenHash();
     await admin
       .from("connector_sessions")
       .update({ expires_at: new Date(Date.now() - 1000).toISOString() })
       .eq("id", session!.id);
+    const renewed = await waitFor(
+      "plugin renews its expired access token",
+      async () => {
+        const row = await tokenHash();
+        return row.token_hash !== beforeExpiry.token_hash &&
+          new Date(row.expires_at).getTime() > Date.now()
+          ? row
+          : undefined;
+      },
+      30_000,
+    ).catch(() => undefined);
+    const stillActive = (await pluginStatus()).connection.state;
+    check(
+      "an expired access token is renewed without pairing again",
+      !!renewed && stillActive === "active",
+      stillActive,
+    );
+
+    await admin
+      .from("connector_sessions")
+      .update({
+        expires_at: new Date(Date.now() - 1000).toISOString(),
+        refresh_expires_at: new Date(Date.now() - 1000).toISOString(),
+      })
+      .eq("id", session!.id);
     const expired = await waitFor(
-      "plugin notices expiry",
+      "plugin notices the connection ended",
       async () => {
         const s = await pluginStatus();
         return s.connection.state === "expired" ? s : undefined;
@@ -879,8 +1291,8 @@ async function main() {
       30_000,
     );
     check(
-      "expired connector token stops the plugin and asks to pair again",
-      true,
+      "a connection unused past its limit asks to pair again",
+      expired.connection.state === "expired",
       expired.connection.reason,
     );
   } finally {
@@ -892,6 +1304,7 @@ async function main() {
     await admin.auth.admin.deleteUser(outsider.id);
     for (const id of extraUsers) await admin.auth.admin.deleteUser(id);
     await trigger("disconnect").catch(() => undefined);
+    await trigger("restore-session").catch(() => undefined);
     for (const match of ownDocuments) await trigger("close-docs", { match }).catch(() => undefined);
   }
 }

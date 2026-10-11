@@ -19,13 +19,21 @@ import Link from "next/link";
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 
 import { api, ApiClientError } from "@/lib/api-client";
+import { NoteContent, SECTION_SIZE, SectionContent, TextContent } from "@/lib/canvas-style";
 import { createClient } from "@/lib/supabase/client";
 
 import { Inspector } from "./inspector";
+import { DirectionPanel, DirectionPicker } from "./direction-panel";
+import { ThemePanel } from "./theme-panel";
+import { type PlacingTool, Toolbox, WaffleButton } from "./toolbox";
 import { nodeTypes } from "./nodes";
 import type { CanvasAsset, CanvasData, CanvasItem } from "./types";
 
 const STATUS_REFRESH_MS = 15_000;
+/** Matches the `references` storage bucket's file size limit. */
+const MAX_REFERENCE_BYTES = 20 * 1024 * 1024;
+const REFERENCE_TYPES = ["image/png", "image/jpeg", "image/webp"];
+const megabytes = (bytes: number) => `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 /** Dashed to read as an organising link, not version history. */
 const EDGE_STYLE = { strokeDasharray: "6 4", strokeWidth: 2 };
 
@@ -44,34 +52,98 @@ function useColorMode(): "light" | "dark" {
   );
 }
 
-function toNodes(canvas: CanvasData, onSaveNote: (item: CanvasItem, text: string) => void): Node[] {
+interface CardHandlers {
+  save: (itemId: string, content: Record<string, unknown>) => void;
+  resize: (itemId: string, box: { x: number; y: number; width: number; height: number }) => void;
+}
+
+/** Parses saved content, falling back to defaults for cards saved before styles existed. */
+function parsed<T>(
+  schema: { safeParse: (v: unknown) => { success: boolean; data?: T } },
+  value: unknown,
+  fallback: T,
+): T {
+  const result = schema.safeParse(value);
+  return result.success ? result.data! : fallback;
+}
+
+function toNodes(canvas: CanvasData, handlers: CardHandlers, focusId: string | null): Node[] {
   const draggable = canvas.role !== "reviewer";
-  return canvas.items.flatMap((item): Node[] => {
+  // Sections first and beneath everything, so cards on top of them stay clickable.
+  const items = [...canvas.items].sort(
+    (a, b) => Number(b.item_type === "section") - Number(a.item_type === "section"),
+  );
+  return items.flatMap((item): Node[] => {
     const position = { x: item.x, y: item.y };
-    if (item.item_type === "asset") {
-      const asset = canvas.assets.find((a) => a.id === item.ref_id);
-      return asset ? [{ id: item.id, type: "asset", position, draggable, data: { asset } }] : [];
+    const common = { id: item.id, position, draggable };
+    const editable = {
+      editable: draggable,
+      autoFocus: item.id === focusId,
+      onSave: (content: Record<string, unknown>) => handlers.save(item.id, content),
+    };
+    const text = String(item.content.text ?? "");
+    switch (item.item_type) {
+      case "asset": {
+        const asset = canvas.assets.find((a) => a.id === item.ref_id);
+        return asset ? [{ ...common, type: "asset", data: { asset } }] : [];
+      }
+      case "note":
+        return [
+          {
+            ...common,
+            type: "note",
+            data: {
+              ...editable,
+              content: parsed(NoteContent, item.content, NoteContent.parse({ text })),
+            },
+          },
+        ];
+      case "text":
+        return [
+          {
+            ...common,
+            type: "text",
+            data: {
+              ...editable,
+              content: parsed(TextContent, item.content, TextContent.parse({ text })),
+            },
+          },
+        ];
+      case "section":
+        return [
+          {
+            ...common,
+            type: "section",
+            zIndex: -1,
+            width: item.width ?? SECTION_SIZE.width,
+            height: item.height ?? SECTION_SIZE.height,
+            data: {
+              ...editable,
+              content: parsed(SectionContent, item.content, SectionContent.parse({ title: "" })),
+              onResize: (box: { x: number; y: number; width: number; height: number }) =>
+                handlers.resize(item.id, box),
+            },
+          },
+        ];
+      case "theme": {
+        const theme = canvas.themes.find((t) => t.id === item.ref_id);
+        return theme ? [{ ...common, type: "theme", data: { theme } }] : [];
+      }
+      case "direction": {
+        const direction = canvas.directions.find((d) => d.id === item.ref_id);
+        return direction ? [{ ...common, type: "direction", data: { direction } }] : [];
+      }
+      case "reference":
+        return [
+          {
+            ...common,
+            type: "reference",
+            data: { name: String(item.content.name ?? ""), url: item.url ?? null },
+          },
+        ];
+      default:
+        return [];
     }
-    if (item.item_type === "note") {
-      const data = {
-        text: String(item.content.text ?? ""),
-        editable: draggable,
-        onSave: (text: string) => onSaveNote(item, text),
-      };
-      return [{ id: item.id, type: "note", position, draggable, data }];
-    }
-    if (item.item_type === "reference") {
-      return [
-        {
-          id: item.id,
-          type: "reference",
-          position,
-          draggable,
-          data: { name: String(item.content.name ?? ""), url: item.url ?? null },
-        },
-      ];
-    }
-    return [];
   });
 }
 
@@ -89,10 +161,34 @@ function CanvasInner({ projectId }: { projectId: string }) {
   const [nodes, setNodes, onNodesChange] = useNodesState<Node>([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
   const [selectedAsset, setSelectedAsset] = useState<string | null>(null);
+  const [selectedTheme, setSelectedTheme] = useState<string | null>(null);
+  const [selectedDirection, setSelectedDirection] = useState<string | null>(null);
+  /** Theme or direction awaiting delete confirmation. */
+  const [pendingCardDelete, setPendingCardDelete] = useState<{
+    kind: "theme" | "direction";
+    id: string;
+  } | null>(null);
+  /** Direction whose versions are being chosen before it is placed. */
+  const [choosingDirection, setChoosingDirection] = useState<{
+    name: string;
+    description: string;
+  } | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   /** Document awaiting delete confirmation in the canvas popup. */
   const [pendingDelete, setPendingDelete] = useState<CanvasAsset | null>(null);
   const [deleting, setDeleting] = useState(false);
+  /** Upload problem shown in a popup. */
+  const [uploadError, setUploadError] = useState<{ title: string; detail: string } | null>(null);
+  /** Card style chosen in the toolbox, waiting for a click on the canvas. */
+  const [placing, setPlacing] = useState<PlacingTool | null>(null);
+  const [toolsOpen, setToolsOpen] = useState(true);
+  /** A card just placed, whose text should take focus once it renders. */
+  const focusId = useRef<string | null>(null);
+  /** Cards inside a section being dragged, with their positions when the drag began. */
+  const carried = useRef<{
+    start: { x: number; y: number };
+    cards: Map<string, { x: number; y: number }>;
+  } | null>(null);
   /** Full reload: positions, cards and connections. */
   const [reloadKey, setReloadKey] = useState(0);
   /** Soft refresh: asset status and previews only, never positions. */
@@ -108,26 +204,43 @@ function CanvasInner({ projectId }: { projectId: string }) {
 
   const report = (e: unknown) => setNotice(e instanceof Error ? e.message : String(e));
 
-  async function saveNote(item: CanvasItem, text: string) {
+  /** Saves one card's fields with its version; on a conflict, reloads the latest layout. */
+  async function patchItem(itemId: string, fields: Record<string, unknown>) {
     try {
       const { item: saved } = await api<{ item: CanvasItem }>(
         "PATCH",
-        `${base}/canvas/items/${item.id}`,
-        {
-          version: versions.current.get(item.id) ?? item.version,
-          content: { ...item.content, text },
-        },
+        `${base}/canvas/items/${itemId}`,
+        { version: versions.current.get(itemId), ...fields },
       );
       versions.current.set(saved.id, saved.version);
     } catch (e) {
       setNotice(
         e instanceof ApiClientError && e.status === 409
-          ? "That note changed elsewhere; reloaded."
-          : String(e),
+          ? "That card changed elsewhere; reloaded the latest version."
+          : e instanceof Error
+            ? e.message
+            : String(e),
       );
       reload();
     }
   }
+
+  const handlers: CardHandlers = {
+    save: (itemId, content) => {
+      // Show style changes immediately; the save confirms them.
+      setNodes((ns) =>
+        ns.map((n) => (n.id === itemId ? { ...n, data: { ...n.data, content } } : n)),
+      );
+      void patchItem(itemId, { content });
+    },
+    resize: (itemId, box) =>
+      void patchItem(itemId, {
+        x: Math.round(box.x),
+        y: Math.round(box.y),
+        width: Math.round(box.width),
+        height: Math.round(box.height),
+      }),
+  };
 
   useEffect(() => {
     let cancelled = false;
@@ -136,7 +249,8 @@ function CanvasInner({ projectId }: { projectId: string }) {
         if (cancelled) return;
         for (const item of canvas.items) versions.current.set(item.id, item.version);
         setData(canvas);
-        setNodes(toNodes(canvas, (item, text) => void saveNote(item, text)));
+        setNodes(toNodes(canvas, handlers, focusId.current));
+        focusId.current = null;
         setEdges(toEdges(canvas));
         if (fitPending.current) {
           fitPending.current = false;
@@ -148,7 +262,7 @@ function CanvasInner({ projectId }: { projectId: string }) {
     return () => {
       cancelled = true;
     };
-    // saveNote only reads refs and stable setters.
+    // The handlers only read refs and stable setters.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [base, reloadKey, setNodes, setEdges]);
 
@@ -186,30 +300,74 @@ function CanvasInner({ projectId }: { projectId: string }) {
     return () => clearInterval(timer);
   }, []);
 
-  async function onNodeDragStop(_event: unknown, node: Node) {
-    try {
-      const { item } = await api<{ item: CanvasItem }>("PATCH", `${base}/canvas/items/${node.id}`, {
-        version: versions.current.get(node.id),
-        x: Math.round(node.position.x),
-        y: Math.round(node.position.y),
-      });
-      versions.current.set(item.id, item.version);
-    } catch (e) {
-      if (e instanceof ApiClientError && e.status === 409) {
-        const current = (e.details as { current?: CanvasItem } | undefined)?.current;
-        if (current) {
-          versions.current.set(current.id, current.version);
-          setNodes((ns) =>
-            ns.map((n) =>
-              n.id === current.id ? { ...n, position: { x: current.x, y: current.y } } : n,
-            ),
-          );
-        }
-        setNotice("Someone else moved that card. It has been restored to their position.");
-      } else {
-        report(e);
-      }
+  /** A section carries the cards whose centre lies inside it. */
+  function onNodeDragStart(_event: unknown, node: Node) {
+    carried.current = null;
+    if (node.type !== "section") return;
+    const width = node.measured?.width ?? node.width ?? 0;
+    const height = node.measured?.height ?? node.height ?? 0;
+    const cards = new Map<string, { x: number; y: number }>();
+    for (const other of flow.getNodes()) {
+      if (other.id === node.id || other.type === "section" || other.selected) continue;
+      const cx = other.position.x + (other.measured?.width ?? 0) / 2;
+      const cy = other.position.y + (other.measured?.height ?? 0) / 2;
+      if (
+        cx >= node.position.x &&
+        cx <= node.position.x + width &&
+        cy >= node.position.y &&
+        cy <= node.position.y + height
+      )
+        cards.set(other.id, { ...other.position });
     }
+    carried.current = { start: { ...node.position }, cards };
+  }
+
+  function onNodeDrag(_event: unknown, node: Node) {
+    const carry = carried.current;
+    if (!carry || node.type !== "section") return;
+    const dx = node.position.x - carry.start.x;
+    const dy = node.position.y - carry.start.y;
+    setNodes((ns) =>
+      ns.map((n) => {
+        const from = carry.cards.get(n.id);
+        return from ? { ...n, position: { x: from.x + dx, y: from.y + dy } } : n;
+      }),
+    );
+  }
+
+  async function onNodeDragStop(_event: unknown, node: Node, dragged: Node[]) {
+    const moved = new Map(dragged.map((n) => [n.id, n.position]));
+    moved.set(node.id, node.position);
+    const carry = carried.current;
+    carried.current = null;
+    if (carry) {
+      const dx = node.position.x - carry.start.x;
+      const dy = node.position.y - carry.start.y;
+      for (const [id, from] of carry.cards) moved.set(id, { x: from.x + dx, y: from.y + dy });
+    }
+    await Promise.all(
+      [...moved].map(([id, position]) =>
+        api<{ item: CanvasItem }>("PATCH", `${base}/canvas/items/${id}`, {
+          version: versions.current.get(id),
+          x: Math.round(position.x),
+          y: Math.round(position.y),
+        })
+          .then(({ item }) => versions.current.set(item.id, item.version))
+          .catch((e) => {
+            if (!(e instanceof ApiClientError && e.status === 409)) throw e;
+            const current = (e.details as { current?: CanvasItem } | undefined)?.current;
+            if (current) {
+              versions.current.set(current.id, current.version);
+              setNodes((ns) =>
+                ns.map((n) =>
+                  n.id === current.id ? { ...n, position: { x: current.x, y: current.y } } : n,
+                ),
+              );
+            }
+            setNotice("Someone else moved that card. It has been restored to their position.");
+          }),
+      ),
+    ).catch(report);
   }
 
   const onConnect: OnConnect = async (connection) => {
@@ -256,10 +414,30 @@ function CanvasInner({ projectId }: { projectId: string }) {
     nodes: Node[];
     edges: Edge[];
   }) => {
+    const directionCard = doomed.find((n) => n.type === "direction");
+    if (directionCard)
+      setPendingCardDelete({
+        kind: "direction",
+        id: (directionCard.data as { direction: { id: string } }).direction.id,
+      });
+    const themeCard = doomed.find((n) => n.type === "theme");
+    if (themeCard)
+      setPendingCardDelete({
+        kind: "theme",
+        id: (themeCard.data as { theme: { id: string } }).theme.id,
+      });
     const card = doomed.find((n) => n.type === "asset");
-    if (!card) return true;
+    // Documents, themes and directions are deleted only after confirming in a popup.
+    const guarded = (n: Node) => n.type === "asset" || n.type === "theme" || n.type === "direction";
+    if (!card)
+      return themeCard || directionCard
+        ? { nodes: doomed.filter((n) => !guarded(n)), edges: links }
+        : true;
     setPendingDelete((card.data as { asset: CanvasAsset }).asset);
-    return { nodes: doomed.filter((n) => n.type !== "asset"), edges: links };
+    return {
+      nodes: doomed.filter((n) => !guarded(n)),
+      edges: links,
+    };
   };
 
   async function deleteAsset(asset: CanvasAsset) {
@@ -293,23 +471,114 @@ function CanvasInner({ projectId }: { projectId: string }) {
     return { x: x + step * 32, y: y + step * 32 };
   };
 
-  async function addNote() {
-    const { x, y } = center();
+  /** Places the toolbox's chosen card where the canvas was clicked. */
+  async function place(tool: PlacingTool, at: { x: number; y: number }) {
+    setPlacing(null);
+    if (tool.kind === "direction") {
+      try {
+        const { direction } = await api<{ direction: { id: string } }>(
+          "POST",
+          `${base}/directions`,
+          {
+            name: tool.name,
+            description: tool.description,
+            entries: tool.entries,
+            x: at.x,
+            y: at.y,
+          },
+        );
+        setSelectedAsset(null);
+        setSelectedTheme(null);
+        setSelectedDirection(direction.id);
+        reload();
+      } catch (e) {
+        report(e);
+      }
+      return;
+    }
+    if (tool.kind === "theme") {
+      try {
+        const { theme } = await api<{ theme: { id: string } }>("POST", `${base}/themes`, {
+          name: tool.name,
+          colors: tool.colors,
+          x: at.x,
+          y: at.y,
+        });
+        setSelectedAsset(null);
+        setSelectedTheme(theme.id);
+        reload();
+      } catch (e) {
+        report(e);
+      }
+      return;
+    }
+    const body =
+      tool.kind === "section"
+        ? {
+            itemType: "section",
+            x: at.x,
+            y: at.y,
+            ...SECTION_SIZE,
+            content: { title: "", color: tool.color },
+          }
+        : { itemType: tool.kind, x: at.x, y: at.y, content: tool.content };
     try {
-      await api("POST", `${base}/canvas/items`, { itemType: "note", x, y, content: { text: "" } });
+      const { item } = await api<{ item: CanvasItem }>("POST", `${base}/canvas/items`, body);
+      focusId.current = item.id;
       reload();
     } catch (e) {
       report(e);
     }
   }
 
+  useEffect(() => {
+    if (!placing) return;
+    const cancel = (e: KeyboardEvent) => e.key === "Escape" && setPlacing(null);
+    window.addEventListener("keydown", cancel);
+    return () => window.removeEventListener("keydown", cancel);
+  }, [placing]);
+
+  // The toolbox's visibility is remembered in this browser.
+  useEffect(() => {
+    try {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- one-time restore from storage
+      setToolsOpen(window.localStorage.getItem("sonder.toolsOpen") !== "false");
+    } catch {
+      // Storage unavailable: keep the default.
+    }
+  }, []);
+  const toggleTools = () =>
+    setToolsOpen((open) => {
+      try {
+        window.localStorage.setItem("sonder.toolsOpen", String(!open));
+      } catch {
+        // Ignore: the choice lasts for this visit.
+      }
+      return !open;
+    });
+
   async function uploadReference(file: File) {
+    // Checked before uploading, so a too-large image is reported at once.
+    if (file.size > MAX_REFERENCE_BYTES)
+      return setUploadError({
+        title: "Image too large",
+        detail: `"${file.name}" is ${megabytes(file.size)}. Reference images can be at most ${megabytes(MAX_REFERENCE_BYTES)}. Try a smaller or compressed version.`,
+      });
+    if (!REFERENCE_TYPES.includes(file.type))
+      return setUploadError({
+        title: "Unsupported image type",
+        detail: `"${file.name}" isn't a PNG, JPEG or WebP image.`,
+      });
     const { x, y } = center();
     const path = `${projectId}/${crypto.randomUUID()}-${file.name.replace(/[^\w.-]+/g, "_")}`;
     const { error } = await createClient()
       .storage.from("references")
       .upload(path, file, { contentType: file.type });
-    if (error) return setNotice(`Upload failed: ${error.message}`);
+    if (error)
+      return setUploadError({
+        title: "Upload failed",
+        detail: `"${file.name}" couldn't be uploaded: ${error.message}`,
+      });
     try {
       await api("POST", `${base}/canvas/items`, {
         itemType: "reference",
@@ -330,6 +599,7 @@ function CanvasInner({ projectId }: { projectId: string }) {
     <div className="flex h-dvh flex-col">
       <header className="flex flex-wrap items-center justify-between gap-2 border-b border-zinc-200 px-4 py-2 dark:border-zinc-800">
         <div className="flex items-center gap-3">
+          {canEdit && <WaffleButton open={toolsOpen} onToggle={toggleTools} />}
           <Link href="/projects" className="text-sm text-zinc-500 hover:underline">
             Projects
           </Link>
@@ -348,18 +618,6 @@ function CanvasInner({ projectId }: { projectId: string }) {
           )}
           {canEdit && (
             <>
-              <button
-                className="rounded border border-zinc-300 px-3 py-1 dark:border-zinc-700"
-                onClick={() => void addNote()}
-              >
-                Add note
-              </button>
-              <button
-                className="rounded border border-zinc-300 px-3 py-1 dark:border-zinc-700"
-                onClick={() => fileInput.current?.click()}
-              >
-                Add reference
-              </button>
               <input
                 ref={fileInput}
                 type="file"
@@ -376,24 +634,55 @@ function CanvasInner({ projectId }: { projectId: string }) {
         </div>
       </header>
       <div className="flex min-h-0 flex-1">
-        <div className="min-w-0 flex-1">
+        {canEdit && toolsOpen && (
+          <Toolbox
+            placing={placing}
+            onPlace={setPlacing}
+            onCancel={() => setPlacing(null)}
+            onAddReference={() => fileInput.current?.click()}
+            onChooseDirection={setChoosingDirection}
+          />
+        )}
+        <div
+          className={`min-w-0 flex-1 ${placing ? "[&_.react-flow__pane]:!cursor-crosshair" : ""}`}
+        >
           <ReactFlow
             nodes={nodes}
             edges={edges}
             nodeTypes={nodeTypes}
             onNodesChange={onNodesChange}
             onEdgesChange={onEdgesChange}
-            onNodeDragStop={(e, node) => void onNodeDragStop(e, node)}
+            onNodeDragStart={onNodeDragStart}
+            onNodeDrag={onNodeDrag}
+            onNodeDragStop={(e, node, dragged) => void onNodeDragStop(e, node, dragged)}
+            elevateNodesOnSelect={false}
             onConnect={canEdit ? onConnect : undefined}
             onEdgesDelete={canEdit ? onEdgesDelete : undefined}
             onNodesDelete={canEdit ? onNodesDelete : undefined}
             onBeforeDelete={canEdit ? onBeforeDelete : async () => false}
-            onNodeClick={(_e, node) =>
+            onNodeClick={(_e, node) => {
               setSelectedAsset(
                 node.type === "asset" ? (node.data as { asset: { id: string } }).asset.id : null,
-              )
-            }
-            onPaneClick={() => setSelectedAsset(null)}
+              );
+              setSelectedTheme(
+                node.type === "theme" ? (node.data as { theme: { id: string } }).theme.id : null,
+              );
+              setSelectedDirection(
+                node.type === "direction"
+                  ? (node.data as { direction: { id: string } }).direction.id
+                  : null,
+              );
+            }}
+            onPaneClick={(event) => {
+              if (placing)
+                return void place(
+                  placing,
+                  flow.screenToFlowPosition({ x: event.clientX, y: event.clientY }),
+                );
+              setSelectedAsset(null);
+              setSelectedTheme(null);
+              setSelectedDirection(null);
+            }}
             nodesConnectable={canEdit}
             colorMode={colorMode}
             fitView
@@ -403,6 +692,26 @@ function CanvasInner({ projectId }: { projectId: string }) {
             <MiniMap pannable zoomable />
           </ReactFlow>
         </div>
+        {selectedDirection && (
+          <DirectionPanel
+            key={selectedDirection}
+            projectId={projectId}
+            directionId={selectedDirection}
+            onClose={() => setSelectedDirection(null)}
+            onChanged={() => setRefreshKey((k) => k + 1)}
+            onDelete={() => setPendingCardDelete({ kind: "direction", id: selectedDirection })}
+          />
+        )}
+        {selectedTheme && (
+          <ThemePanel
+            key={selectedTheme}
+            projectId={projectId}
+            themeId={selectedTheme}
+            onClose={() => setSelectedTheme(null)}
+            onChanged={() => setReloadKey((k) => k + 1)}
+            onDelete={() => setPendingCardDelete({ kind: "theme", id: selectedTheme })}
+          />
+        )}
         {asset && (
           <Inspector
             key={asset.id}
@@ -414,6 +723,97 @@ function CanvasInner({ projectId }: { projectId: string }) {
           />
         )}
       </div>
+      {choosingDirection && data && (
+        <DirectionPicker
+          projectId={projectId}
+          assets={data.assets}
+          name={choosingDirection.name}
+          onCancel={() => setChoosingDirection(null)}
+          onConfirm={(entries) => {
+            // Saved straight away, in the middle of the view: no extra click to place it.
+            void place({ kind: "direction", ...choosingDirection, entries }, center());
+            setChoosingDirection(null);
+          }}
+        />
+      )}
+      {pendingCardDelete && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+          onClick={() => setPendingCardDelete(null)}
+        >
+          <div
+            role="alertdialog"
+            aria-labelledby="card-delete-title"
+            className="flex w-full max-w-sm flex-col gap-4 rounded-lg bg-white p-5 shadow-xl dark:bg-zinc-900"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h2 id="card-delete-title" className="font-semibold">
+              Delete{" "}
+              {(pendingCardDelete.kind === "theme" ? data?.themes : data?.directions)?.find(
+                (x) => x.id === pendingCardDelete.id,
+              )?.name ?? pendingCardDelete.kind}
+              ?
+            </h2>
+            <p className="text-sm text-zinc-600 dark:text-zinc-400">
+              {pendingCardDelete.kind === "theme"
+                ? "The theme and its layer mappings are removed. Documents it was already applied to keep those versions in their history."
+                : "The direction is removed. The versions it named stay in each document's history."}
+            </p>
+            <div className="flex justify-end gap-2">
+              <button
+                autoFocus
+                className="rounded bg-zinc-200 px-4 py-1.5 text-sm text-zinc-800 hover:bg-zinc-300 dark:bg-zinc-700 dark:text-zinc-100 dark:hover:bg-zinc-600"
+                onClick={() => setPendingCardDelete(null)}
+              >
+                Cancel
+              </button>
+              <button
+                className="rounded bg-red-600 px-4 py-1.5 text-sm text-white hover:bg-red-700"
+                onClick={() => {
+                  const { kind, id } = pendingCardDelete;
+                  setPendingCardDelete(null);
+                  void api("DELETE", `${base}/${kind === "theme" ? "themes" : "directions"}/${id}`)
+                    .then(() => {
+                      if (selectedTheme === id) setSelectedTheme(null);
+                      if (selectedDirection === id) setSelectedDirection(null);
+                      reload();
+                    })
+                    .catch(report);
+                }}
+              >
+                Delete
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+      {uploadError && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+          onClick={() => setUploadError(null)}
+        >
+          <div
+            role="alertdialog"
+            aria-labelledby="upload-error-title"
+            className="flex w-full max-w-sm flex-col gap-4 rounded-lg bg-white p-5 shadow-xl dark:bg-zinc-900"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h2 id="upload-error-title" className="font-semibold">
+              {uploadError.title}
+            </h2>
+            <p className="text-sm text-zinc-600 dark:text-zinc-400">{uploadError.detail}</p>
+            <div className="flex justify-end">
+              <button
+                autoFocus
+                className="rounded bg-zinc-900 px-4 py-1.5 text-sm text-white hover:bg-zinc-700 dark:bg-white dark:text-black dark:hover:bg-zinc-200"
+                onClick={() => setUploadError(null)}
+              >
+                OK
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       {pendingDelete && (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"

@@ -8,6 +8,7 @@ import {
   HeartbeatResponse,
   PairPollResponse,
   PairStartResponse,
+  RefreshResponse,
 } from "@sonder/contracts";
 import type { z } from "zod";
 
@@ -64,6 +65,10 @@ export class SonderApi {
     return request("/api/connector/pair/start", { json: { manifest } }, PairStartResponse);
   }
 
+  static refresh(refreshToken: string) {
+    return request("/api/connector/refresh", { json: { refreshToken } }, RefreshResponse);
+  }
+
   static pairPoll(sessionId: string, pollSecret: string) {
     return request(
       "/api/connector/pair/poll",
@@ -78,6 +83,11 @@ export class SonderApi {
       { token: this.token, json: { openDocuments } },
       HeartbeatResponse,
     );
+  }
+
+  /** Revokes this session's token on the server. */
+  disconnect() {
+    return request("/api/connector/disconnect", { token: this.token });
   }
 
   checkpointElements(checkpointId: string) {
