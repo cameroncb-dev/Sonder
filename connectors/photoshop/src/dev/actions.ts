@@ -114,8 +114,9 @@ export function devActions(
       return runtime.linkActiveDocument(command.projectId);
     },
     fault: async (command: TriggerCommand) => {
-      if (command.stage !== "before-finalize") throw new Error("Unknown fault stage");
-      runtime.injectFault("before-finalize");
+      if (command.stage !== "before-finalize" && command.stage !== "fail-candidate")
+        throw new Error("Unknown fault stage");
+      runtime.injectFault(command.stage);
       return { armed: command.stage };
     },
     status: async () => runtime.status,

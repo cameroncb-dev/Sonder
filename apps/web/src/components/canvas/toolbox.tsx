@@ -15,9 +15,22 @@ import { ColorPicker, FontPicker, ShapePicker, SizePicker, TextColorPicker } fro
 export type PlacingTool =
   | { kind: "note"; content: NoteContent }
   | { kind: "text"; content: TextContent }
-  | { kind: "section"; color: CanvasColor };
+  | { kind: "section"; color: CanvasColor }
+  | {
+      kind: "theme";
+      name: string;
+      colors: Record<"primary" | "background" | "text" | "accent", string>;
+    };
 
-type Panel = "notes" | "text" | "sections" | "references";
+type Panel = "notes" | "text" | "sections" | "themes" | "references";
+
+const THEME_DEFAULT = {
+  primary: "#1E3A5F",
+  background: "#F5F1E8",
+  text: "#1A1A1A",
+  accent: "#E4572E",
+};
+const THEME_ROLES = ["primary", "background", "text", "accent"] as const;
 
 const STORAGE_KEY = "sonder.toolbox";
 
@@ -26,6 +39,7 @@ interface Saved {
   note: Omit<NoteContent, "text">;
   text: Omit<TextContent, "text">;
   section: CanvasColor;
+  theme: { name: string; colors: typeof THEME_DEFAULT };
 }
 
 const DEFAULTS: Saved = {
@@ -33,6 +47,7 @@ const DEFAULTS: Saved = {
   note: { shape: "square", color: "yellow", font: DEFAULT_FONT },
   text: { font: DEFAULT_FONT, size: "medium", color: "default" },
   section: "grey",
+  theme: { name: "", colors: THEME_DEFAULT },
 };
 
 function loadSaved(): Saved {
@@ -100,7 +115,7 @@ const Label = ({ children }: { children: React.ReactNode }) => (
 );
 
 const placeButton =
-  "rounded bg-zinc-900 px-3 py-1.5 text-sm text-white hover:bg-zinc-700 dark:bg-white dark:text-black dark:hover:bg-zinc-200";
+  "rounded bg-zinc-900 px-3 py-1.5 text-sm text-white hover:bg-zinc-700 disabled:opacity-40 dark:bg-white dark:text-black dark:hover:bg-zinc-200";
 
 /**
  * Left-hand tools: choose a card's style first, then click the canvas to place it.
@@ -213,6 +228,54 @@ export function Toolbox({
           onClick={() => onPlace({ kind: "section", color: saved.section })}
         >
           Place section
+        </button>
+      </Section>
+
+      <Section id="themes" title="Themes" open={isOpen("themes")} onToggle={toggle}>
+        <p className="text-xs text-zinc-500">
+          Four named colors you can apply to several documents at once. Place the theme, then click
+          it to map layers and apply.
+        </p>
+        <Label>Name</Label>
+        <input
+          className="rounded border border-zinc-300 bg-white px-2 py-1 text-sm dark:border-zinc-600 dark:bg-zinc-900"
+          placeholder="e.g. Broadway"
+          value={saved.theme.name}
+          onChange={(e) => update({ theme: { ...saved.theme, name: e.target.value } })}
+        />
+        <Label>Colors</Label>
+        <div className="grid grid-cols-4 gap-1.5">
+          {THEME_ROLES.map((role) => (
+            <label
+              key={role}
+              className="flex flex-col items-center gap-0.5 text-[10px] capitalize text-zinc-500"
+            >
+              <input
+                type="color"
+                className="h-8 w-full cursor-pointer rounded border border-zinc-300 bg-transparent dark:border-zinc-600"
+                value={saved.theme.colors[role]}
+                onChange={(e) =>
+                  update({
+                    theme: {
+                      ...saved.theme,
+                      colors: { ...saved.theme.colors, [role]: e.target.value.toUpperCase() },
+                    },
+                  })
+                }
+              />
+              {role}
+            </label>
+          ))}
+        </div>
+        <button
+          type="button"
+          className={placeButton}
+          disabled={!saved.theme.name.trim()}
+          onClick={() =>
+            onPlace({ kind: "theme", name: saved.theme.name.trim(), colors: saved.theme.colors })
+          }
+        >
+          Place theme
         </button>
       </Section>
 

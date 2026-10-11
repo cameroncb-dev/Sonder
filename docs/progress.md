@@ -15,6 +15,7 @@ Scope (from `Design_Plan.md` §15, plus canvas additions the user requested on 2
    mappings per asset; per-asset candidates and previews; inclusion and exclusion; approval
    of the collection; per-asset status; visible partial failures.
 3. **Directions:** named collections of exact checkpoints that stay stable as branches move.
+   _(Next.)_
 
 ### Part 1 — canvas additions: built, awaiting the user's check
 
@@ -40,6 +41,36 @@ Scope (from `Design_Plan.md` §15, plus canvas additions the user requested on 2
   typecheck, lint, build.
 - **Not verified automatically:** how it looks in a browser, placement clicks, and sections
   carrying cards while dragged (client-side logic). These are for the user's check.
+
+### Part 2 — shared themes: built and verified, awaiting the user's check
+
+- **Themes** (name + primary, background, text and accent colors) are created from the
+  toolbox's Themes section and placed as canvas cards. Clicking one opens the theme panel.
+- **Mappings:** per document, choose which text or solid-fill layer takes which theme color.
+  Layers get named element roles (`asset_elements`, e.g. `headline`), and `theme_mappings`
+  links color role → element role → property.
+- **Checked before running** (`src/server/themes.ts`, `planTheme`). Each document is judged
+  on its own: mappings exist; it has been captured; the connector can build candidates; the
+  color mode is supported (RGB); each mapped layer still exists, has the right kind and is
+  editable; colors already equal are skipped. Results: ready / already matches / no layers
+  mapped / can't apply (with reasons).
+- **Apply** creates a `coordinated_update` proposal with one item per document. Chosen
+  documents get a `createCandidate` job (the same plugin path as Phase 5). Unchosen or
+  unsupported ones are recorded as excluded, with the reason.
+- **Partial failure:** the proposal's status comes from its items (`refresh_proposal_status`):
+  preparing / ready / partially_failed / failed / finalized, and never complete while an
+  included document has failed. A failed document can be retried on its own
+  (`retry_proposal_item`).
+- **Approval** (`approve_proposal_items`) finalizes exactly the reviewed candidates, each on
+  its own branch by compare-and-swap. A document whose branch moved fails alone (STALE).
+  Ready documents not chosen are excluded.
+- **Also in this part:** a popup for reference images over 20 MB (or of the wrong type),
+  checked before uploading.
+- **Checks:** unit 15/15 (5 planner tests), integration 40/40 (5 new: exclusions, never
+  complete while partial, per-item approval, isolated retry, stale branch fails only its
+  item), and an E2E pass with 7 new checks. Those use two real Photoshop documents, one
+  theme and a forced failure, and confirm the themed colors in both manifests and that the
+  previous versions are kept.
 
 Notes:
 

@@ -206,7 +206,7 @@ export class ConnectorRuntime {
   }
 
   /** Development fault injection, used to verify recovery from interrupted jobs. */
-  injectFault(stage: "before-finalize") {
+  injectFault(stage: "before-finalize" | "fail-candidate") {
     this.faults.add(stage);
   }
 
@@ -516,6 +516,12 @@ export class ConnectorRuntime {
     };
     const jobs = await getOrCreateFolder(await connectorFolder(), "jobs");
     const folder = await getOrCreateFolder(jobs, job.operationId);
+
+    if (this.faults.delete("fail-candidate"))
+      throw new ConnectorError({
+        code: "APPLICATION_ERROR",
+        message: "Simulated failure while building the candidate (fault injection)",
+      });
 
     let checkpoint: PhotoshopCheckpoint;
     let reused = true;

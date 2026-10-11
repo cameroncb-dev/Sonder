@@ -23,6 +23,7 @@ import { NoteContent, SECTION_SIZE, SectionContent, TextContent } from "@/lib/ca
 import { createClient } from "@/lib/supabase/client";
 
 import { Inspector } from "./inspector";
+import { ThemePanel } from "./theme-panel";
 import { type PlacingTool, Toolbox, WaffleButton } from "./toolbox";
 import { nodeTypes } from "./nodes";
 import type { CanvasAsset, CanvasData, CanvasItem } from "./types";
@@ -123,6 +124,10 @@ function toNodes(canvas: CanvasData, handlers: CardHandlers, focusId: string | n
             },
           },
         ];
+      case "theme": {
+        const theme = canvas.themes.find((t) => t.id === item.ref_id);
+        return theme ? [{ ...common, type: "theme", data: { theme } }] : [];
+      }
       case "reference":
         return [
           {
@@ -151,6 +156,8 @@ function CanvasInner({ projectId }: { projectId: string }) {
   const [nodes, setNodes, onNodesChange] = useNodesState<Node>([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
   const [selectedAsset, setSelectedAsset] = useState<string | null>(null);
+  const [selectedTheme, setSelectedTheme] = useState<string | null>(null);
+  const [pendingThemeDelete, setPendingThemeDelete] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   /** Document awaiting delete confirmation in the canvas popup. */
   const [pendingDelete, setPendingDelete] = useState<CanvasAsset | null>(null);
@@ -392,10 +399,16 @@ function CanvasInner({ projectId }: { projectId: string }) {
     nodes: Node[];
     edges: Edge[];
   }) => {
+    const themeCard = doomed.find((n) => n.type === "theme");
+    if (themeCard) setPendingThemeDelete((themeCard.data as { theme: { id: string } }).theme.id);
     const card = doomed.find((n) => n.type === "asset");
-    if (!card) return true;
+    if (!card)
+      return themeCard ? { nodes: doomed.filter((n) => n.type !== "theme"), edges: links } : true;
     setPendingDelete((card.data as { asset: CanvasAsset }).asset);
-    return { nodes: doomed.filter((n) => n.type !== "asset"), edges: links };
+    return {
+      nodes: doomed.filter((n) => n.type !== "asset" && n.type !== "theme"),
+      edges: links,
+    };
   };
 
   async function deleteAsset(asset: CanvasAsset) {
@@ -432,6 +445,22 @@ function CanvasInner({ projectId }: { projectId: string }) {
   /** Places the toolbox's chosen card where the canvas was clicked. */
   async function place(tool: PlacingTool, at: { x: number; y: number }) {
     setPlacing(null);
+    if (tool.kind === "theme") {
+      try {
+        const { theme } = await api<{ theme: { id: string } }>("POST", `${base}/themes`, {
+          name: tool.name,
+          colors: tool.colors,
+          x: at.x,
+          y: at.y,
+        });
+        setSelectedAsset(null);
+        setSelectedTheme(theme.id);
+        reload();
+      } catch (e) {
+        report(e);
+      }
+      return;
+    }
     const body =
       tool.kind === "section"
         ? {
@@ -579,11 +608,14 @@ function CanvasInner({ projectId }: { projectId: string }) {
             onEdgesDelete={canEdit ? onEdgesDelete : undefined}
             onNodesDelete={canEdit ? onNodesDelete : undefined}
             onBeforeDelete={canEdit ? onBeforeDelete : async () => false}
-            onNodeClick={(_e, node) =>
+            onNodeClick={(_e, node) => {
               setSelectedAsset(
                 node.type === "asset" ? (node.data as { asset: { id: string } }).asset.id : null,
-              )
-            }
+              );
+              setSelectedTheme(
+                node.type === "theme" ? (node.data as { theme: { id: string } }).theme.id : null,
+              );
+            }}
             onPaneClick={(event) => {
               if (placing)
                 return void place(
@@ -591,6 +623,7 @@ function CanvasInner({ projectId }: { projectId: string }) {
                   flow.screenToFlowPosition({ x: event.clientX, y: event.clientY }),
                 );
               setSelectedAsset(null);
+              setSelectedTheme(null);
             }}
             nodesConnectable={canEdit}
             colorMode={colorMode}
@@ -601,6 +634,16 @@ function CanvasInner({ projectId }: { projectId: string }) {
             <MiniMap pannable zoomable />
           </ReactFlow>
         </div>
+        {selectedTheme && (
+          <ThemePanel
+            key={selectedTheme}
+            projectId={projectId}
+            themeId={selectedTheme}
+            onClose={() => setSelectedTheme(null)}
+            onChanged={() => setReloadKey((k) => k + 1)}
+            onDelete={() => setPendingThemeDelete(selectedTheme)}
+          />
+        )}
         {asset && (
           <Inspector
             key={asset.id}
@@ -612,6 +655,51 @@ function CanvasInner({ projectId }: { projectId: string }) {
           />
         )}
       </div>
+      {pendingThemeDelete && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+          onClick={() => setPendingThemeDelete(null)}
+        >
+          <div
+            role="alertdialog"
+            aria-labelledby="theme-delete-title"
+            className="flex w-full max-w-sm flex-col gap-4 rounded-lg bg-white p-5 shadow-xl dark:bg-zinc-900"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h2 id="theme-delete-title" className="font-semibold">
+              Delete {data?.themes.find((t) => t.id === pendingThemeDelete)?.name ?? "theme"}?
+            </h2>
+            <p className="text-sm text-zinc-600 dark:text-zinc-400">
+              The theme and its layer mappings are removed. Documents it was already applied to keep
+              those versions in their history.
+            </p>
+            <div className="flex justify-end gap-2">
+              <button
+                autoFocus
+                className="rounded bg-zinc-200 px-4 py-1.5 text-sm text-zinc-800 hover:bg-zinc-300 dark:bg-zinc-700 dark:text-zinc-100 dark:hover:bg-zinc-600"
+                onClick={() => setPendingThemeDelete(null)}
+              >
+                Cancel
+              </button>
+              <button
+                className="rounded bg-red-600 px-4 py-1.5 text-sm text-white hover:bg-red-700"
+                onClick={() => {
+                  const id = pendingThemeDelete;
+                  setPendingThemeDelete(null);
+                  void api("DELETE", `${base}/themes/${id}`)
+                    .then(() => {
+                      if (selectedTheme === id) setSelectedTheme(null);
+                      reload();
+                    })
+                    .catch(report);
+                }}
+              >
+                Delete
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       {uploadError && (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"

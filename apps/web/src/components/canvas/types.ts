@@ -48,6 +48,65 @@ export interface CanvasData {
   assets: CanvasAsset[];
   items: CanvasItem[];
   connections: CanvasConnection[];
+  themes: CanvasTheme[];
+}
+
+export type ColorRole = "primary" | "background" | "text" | "accent";
+export const COLOR_ROLES: ColorRole[] = ["primary", "background", "text", "accent"];
+
+export interface CanvasTheme {
+  id: string;
+  name: string;
+  colors: Record<ColorRole, string>;
+}
+
+export interface ThemePlan {
+  assetId: string;
+  name: string;
+  branchName: string | null;
+  checkpointId: string | null;
+  status: "ready" | "no_changes" | "no_mappings" | "unsupported";
+  reasons: string[];
+  changes: Array<{ element: string; role: ColorRole; property: string; from?: string; to: string }>;
+}
+
+export interface ThemeDetail {
+  role: CanvasData["role"];
+  theme: CanvasTheme;
+  assets: Array<{
+    id: string;
+    name: string;
+    branchName: string | null;
+    colorMode: string | null;
+    elements: Array<{
+      key: string;
+      native: Element["native"];
+      name: string;
+      kind: string;
+      editable: boolean;
+      color?: unknown;
+      colorRole: ColorRole | null;
+    }>;
+  }>;
+  plans: ThemePlan[];
+}
+
+export interface ThemeUpdate {
+  id: string;
+  status: Proposal["status"];
+  createdAt: string;
+  approvedAt: string | null;
+  request: { themeName: string; colors: Record<ColorRole, string> };
+  items: Array<{
+    id: string;
+    assetId: string;
+    assetName: string;
+    status: "pending" | "running" | "ready" | "approved" | "finalized" | "failed" | "excluded";
+    outcome: { reason?: string; error?: Job["error"] } | null;
+    candidateCheckpointId: string | null;
+    candidatePreviewUrl: string | null;
+    beforePreviewUrl: string | null;
+  }>;
 }
 
 export interface Element {

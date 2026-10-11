@@ -95,10 +95,18 @@ export const GET = handler(
     );
     const referenceUrls = await sign("references", references);
     const status = await connectorStatus(projectId, assets);
+    const themes = unwrap(
+      await supabase
+        .from("themes")
+        .select("id,name,colors")
+        .eq("project_id", projectId)
+        .order("created_at"),
+    );
 
     return Response.json({
       project,
       role,
+      themes,
       assets: assets.map((asset) => {
         const branch = branches.find((b) => b.id === asset.active_branch_id);
         const head = headRows.find((h) => h.id === branch?.head_checkpoint_id);

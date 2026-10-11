@@ -859,6 +859,188 @@ async function main() {
       nothing.body.error?.code,
     );
 
+    // --- Phase 6: one theme across two documents, with a partial failure ---
+    const second = await trigger("open-fixture");
+    if (typeof second.path === "string") ownDocuments.push(second.path.replace(/[^/]+$/, ""));
+    const flyer = await trigger("link", { projectId });
+    await waitFor("heartbeat maps the second document", async () =>
+      (await pluginStatus()).assets.some((a: { assetId: string }) => a.assetId === flyer.id),
+    );
+    const flyerCapture = await owner.api(
+      "POST",
+      `/api/projects/${projectId}/assets/${flyer.id}/capture`,
+      { message: "Flyer first version" },
+    );
+    await waitJob(owner.api, flyerCapture.body.job.id, "succeeded");
+
+    const themeColors = {
+      primary: "#123456",
+      background: "#2E7D32",
+      text: "#FFF8E1",
+      accent: "#FFB300",
+    };
+    const themeRes = await owner.api("POST", `/api/projects/${projectId}/themes`, {
+      name: "Forest",
+      colors: themeColors,
+      x: 1200,
+      y: 100,
+    });
+    const themeUrl = `/api/projects/${projectId}/themes/${themeRes.body.theme?.id}`;
+    type Mappable = { native: unknown; name: string };
+    const detail = (await owner.api("GET", themeUrl)).body;
+    for (const doc of [asset.id, flyer.id] as string[]) {
+      const elements = detail.assets.find((a: { id: string }) => a.id === doc)
+        .elements as Mappable[];
+      await owner.api("PUT", `${themeUrl}/mappings/${doc}`, {
+        elements: elements.map((e) => ({
+          native: e.native,
+          colorRole:
+            e.name === "Background Color" ? "background" : e.name === "Headline" ? "text" : null,
+        })),
+      });
+    }
+    const planned = (await owner.api("GET", themeUrl)).body.plans as Array<{
+      assetId: string;
+      status: string;
+    }>;
+    check(
+      "a theme maps to layers of two documents, each checked before running",
+      themeRes.status === 201 &&
+        [asset.id, flyer.id].every(
+          (id) => planned.find((p) => p.assetId === id)?.status === "ready",
+        ),
+      planned.map((p) => p.status),
+    );
+
+    const headsBefore = Object.fromEntries(
+      await Promise.all(
+        [asset.id, flyer.id].map(async (id: string) => [
+          id,
+          (
+            await admin
+              .from("assets")
+              .select("branches!assets_active_branch_fk(head_checkpoint_id)")
+              .eq("id", id)
+              .single()
+          ).data?.branches as unknown as { head_checkpoint_id: string },
+        ]),
+      ),
+    );
+    await trigger("fault", { stage: "fail-candidate" });
+    const applied = await owner.api("POST", `${themeUrl}/apply`, {
+      assetIds: [asset.id, flyer.id],
+    });
+    type Update = {
+      id: string;
+      status: string;
+      items: Array<{ id: string; assetId: string; status: string; candidateCheckpointId: string }>;
+    };
+    const settled = async () =>
+      waitFor(
+        "theme candidates to settle",
+        async () => {
+          const u = (await owner.api("GET", `${themeUrl}/proposals`)).body.proposals?.[0] as Update;
+          return u && u.status !== "preparing" ? u : undefined;
+        },
+        180_000,
+      );
+    const partial = await settled();
+    const failedItem = partial.items.find((i) => i.status === "failed");
+    const readyItem = partial.items.find((i) => i.status === "ready");
+    check(
+      "a failure in one document is visible and does not block the other",
+      applied.status === 201 &&
+        partial.status === "partially_failed" &&
+        !!failedItem &&
+        !!readyItem,
+      partial.items.map((i) => i.status),
+    );
+
+    const firstApproval = await owner.api(
+      "POST",
+      `/api/projects/${projectId}/proposals/${partial.id}/approve-items`,
+      {
+        items: [{ itemId: readyItem?.id, candidateCheckpointId: readyItem?.candidateCheckpointId }],
+      },
+    );
+    check(
+      "approving the successful document keeps the update marked incomplete",
+      firstApproval.status === 200 && firstApproval.body.proposal?.status === "partially_failed",
+      firstApproval.body.proposal?.status,
+    );
+
+    await owner.api(
+      "POST",
+      `/api/projects/${projectId}/proposals/${partial.id}/items/${failedItem?.id}/retry`,
+    );
+    const retried = await settled();
+    const retriedItem = retried.items.find((i) => i.id === failedItem?.id);
+    const secondApproval = await owner.api(
+      "POST",
+      `/api/projects/${projectId}/proposals/${partial.id}/approve-items`,
+      {
+        items: [
+          { itemId: retriedItem?.id, candidateCheckpointId: retriedItem?.candidateCheckpointId },
+        ],
+      },
+    );
+    check(
+      "the failed document is retried on its own and the update completes",
+      retriedItem?.status === "ready" && secondApproval.body.proposal?.status === "finalized",
+      [retriedItem?.status, secondApproval.body.proposal?.status],
+    );
+
+    type ManifestEl = { name: string; properties: Array<{ type: string; value: unknown }> };
+    const themed = await Promise.all(
+      [asset.id, flyer.id].map(async (id: string) => {
+        const { data } = await admin
+          .from("assets")
+          .select("branches!assets_active_branch_fk(head_checkpoint_id)")
+          .eq("id", id)
+          .single();
+        const headId = (data?.branches as unknown as { head_checkpoint_id: string })
+          .head_checkpoint_id;
+        const { data: cp } = await admin
+          .from("checkpoints")
+          .select("manifest")
+          .eq("id", headId)
+          .single();
+        const { data: parents } = await admin
+          .from("checkpoint_parents")
+          .select("parent_id")
+          .eq("checkpoint_id", headId);
+        const els = cp?.manifest.elements as ManifestEl[];
+        const value = (name: string, type: string) =>
+          els.find((e) => e.name === name)?.properties.find((p) => p.type === type)?.value;
+        return {
+          background: value("Background Color", "fill.color"),
+          headline: value("Headline", "text.color"),
+          parent: parents?.[0]?.parent_id,
+          before: headsBefore[id]?.head_checkpoint_id,
+        };
+      }),
+    );
+    check(
+      "one theme updated both documents through their mappings",
+      themed.every(
+        (t) => t.background === themeColors.background && t.headline === themeColors.text,
+      ),
+      themed.map((t) => [t.background, t.headline]),
+    );
+    const { data: previous } = await admin
+      .from("checkpoints")
+      .select("id,status")
+      .in(
+        "id",
+        themed.map((t) => t.before),
+      );
+    check(
+      "each themed result builds on, and keeps, the version before it",
+      themed.every((t) => t.parent === t.before) &&
+        previous?.length === 2 &&
+        previous.every((p) => p.status === "finalized"),
+    );
+
     // --- Routing: a job for a document that is not open is not delivered ---
     const closedAsset = await owner.api("POST", `/api/projects/${projectId}/assets`, {
       name: "Closed",
