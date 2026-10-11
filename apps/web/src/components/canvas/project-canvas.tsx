@@ -23,6 +23,7 @@ import { NoteContent, SECTION_SIZE, SectionContent, TextContent } from "@/lib/ca
 import { createClient } from "@/lib/supabase/client";
 
 import { Inspector } from "./inspector";
+import { OrganizeDialog, type OrganizePlan } from "./organize-dialog";
 import { DirectionPanel, DirectionPicker } from "./direction-panel";
 import { ThemePanel } from "./theme-panel";
 import { type PlacingTool, Toolbox, WaffleButton } from "./toolbox";
@@ -177,6 +178,14 @@ function CanvasInner({ projectId }: { projectId: string }) {
   /** Document awaiting delete confirmation in the canvas popup. */
   const [pendingDelete, setPendingDelete] = useState<CanvasAsset | null>(null);
   const [deleting, setDeleting] = useState(false);
+  const [aiEnabled, setAiEnabled] = useState(false);
+  const [organizing, setOrganizing] = useState(false);
+  /** What the last "Organize" changed, so it can be undone. */
+  const [organizeUndo, setOrganizeUndo] = useState<{
+    restore: Array<Pick<CanvasItem, "id" | "x" | "y" | "width" | "height" | "content">>;
+    createdItems: string[];
+    createdConnections: string[];
+  } | null>(null);
   /** Upload problem shown in a popup. */
   const [uploadError, setUploadError] = useState<{ title: string; detail: string } | null>(null);
   /** Card style chosen in the toolbox, waiting for a click on the canvas. */
@@ -471,6 +480,111 @@ function CanvasInner({ projectId }: { projectId: string }) {
     return { x: x + step * 32, y: y + step * 32 };
   };
 
+  useEffect(() => {
+    let cancelled = false;
+    void api<{ enabled: boolean }>("GET", "/api/ai/status")
+      .then((st) => !cancelled && setAiEnabled(st.enabled))
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  /** Applies an organize plan through the normal saves (with versions) and records an undo. */
+  async function applyOrganize(plan: OrganizePlan) {
+    setOrganizing(false);
+    const items = new Map((data?.items ?? []).map((i) => [i.id, i]));
+    const undo = {
+      restore: [] as Array<Pick<CanvasItem, "id" | "x" | "y" | "width" | "height" | "content">>,
+      createdItems: [] as string[],
+      createdConnections: [] as string[],
+    };
+    try {
+      for (const move of plan.moves) {
+        const before = items.get(move.itemId);
+        if (!before) continue;
+        undo.restore.push({
+          id: before.id,
+          x: before.x,
+          y: before.y,
+          width: before.width,
+          height: before.height,
+          content: before.content,
+        });
+        await patchItem(move.itemId, {
+          x: Math.round(move.x),
+          y: Math.round(move.y),
+          ...(move.width
+            ? { width: Math.round(move.width), height: Math.round(move.height!) }
+            : {}),
+          ...(move.title
+            ? { content: { ...before.content, title: move.title, color: move.color ?? "grey" } }
+            : {}),
+        });
+      }
+      for (const section of plan.newSections) {
+        const { item } = await api<{ item: CanvasItem }>("POST", `${base}/canvas/items`, {
+          itemType: "section",
+          x: Math.round(section.x),
+          y: Math.round(section.y),
+          width: Math.round(section.width),
+          height: Math.round(section.height),
+          content: { title: section.title, color: section.color },
+        });
+        undo.createdItems.push(item.id);
+      }
+      for (const link of plan.connections) {
+        const { connection } = await api<{ connection: { id: string } }>(
+          "POST",
+          `${base}/canvas/connections`,
+          { fromItemId: link.from, toItemId: link.to, ...(link.why ? { label: link.why } : {}) },
+        );
+        undo.createdConnections.push(connection.id);
+      }
+      if (plan.summary) {
+        const { item } = await api<{ item: CanvasItem }>("POST", `${base}/canvas/items`, {
+          itemType: "note",
+          x: Math.round(plan.summary.x),
+          y: Math.round(plan.summary.y),
+          content: { text: plan.summary.text, shape: "rounded", color: "yellow" },
+        });
+        undo.createdItems.push(item.id);
+      }
+      setNotice("Board organized.");
+    } catch (e) {
+      report(e);
+    } finally {
+      setOrganizeUndo(undo);
+      fitPending.current = true;
+      reload();
+    }
+  }
+
+  async function undoOrganize() {
+    const undo = organizeUndo;
+    setOrganizeUndo(null);
+    if (!undo) return;
+    try {
+      for (const id of undo.createdConnections)
+        await api("DELETE", `${base}/canvas/connections/${id}`).catch(() => undefined);
+      for (const id of undo.createdItems)
+        await api("DELETE", `${base}/canvas/items/${id}`).catch(() => undefined);
+      for (const r of undo.restore)
+        await patchItem(r.id, {
+          x: r.x,
+          y: r.y,
+          ...(r.width ? { width: r.width, height: r.height } : {}),
+          ...(r.content && "title" in r.content ? { content: r.content } : {}),
+        });
+      setNotice("Organize undone.");
+    } catch (e) {
+      report(e);
+    } finally {
+      fitPending.current = true;
+      reload();
+    }
+  }
+
   /** Places the toolbox's chosen card where the canvas was clicked. */
   async function place(tool: PlacingTool, at: { x: number; y: number }) {
     setPlacing(null);
@@ -616,6 +730,23 @@ function CanvasInner({ projectId }: { projectId: string }) {
               {notice}
             </span>
           )}
+          {canEdit && organizeUndo && (
+            <button
+              className="rounded border border-zinc-300 px-3 py-1 dark:border-zinc-700"
+              onClick={() => void undoOrganize()}
+            >
+              Undo organize
+            </button>
+          )}
+          {canEdit && aiEnabled && (
+            <button
+              className="rounded border border-zinc-300 px-3 py-1 dark:border-zinc-700"
+              onClick={() => setOrganizing(true)}
+              title="Let Gemini group your cards into sections"
+            >
+              ✦ Organize
+            </button>
+          )}
           {canEdit && (
             <>
               <input
@@ -723,6 +854,13 @@ function CanvasInner({ projectId }: { projectId: string }) {
           />
         )}
       </div>
+      {organizing && (
+        <OrganizeDialog
+          projectId={projectId}
+          onCancel={() => setOrganizing(false)}
+          onApply={(plan) => void applyOrganize(plan)}
+        />
+      )}
       {choosingDirection && data && (
         <DirectionPicker
           projectId={projectId}

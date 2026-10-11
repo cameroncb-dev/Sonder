@@ -8,6 +8,7 @@ import { CombineView } from "./combine-view";
 import { CompareView } from "./compare-view";
 import { changeLabel } from "./nodes";
 import { HistoryGraph } from "./history-graph";
+import { Ideas } from "./ideas";
 import {
   APPLICATION_LABELS,
   type CanvasAsset,
@@ -22,6 +23,7 @@ const JOB_LABELS: Record<string, string> = {
   captureCheckpoint: "Capture",
   openCheckpoint: "Switch branch",
   createCandidate: "Build candidate",
+  readProperties: "Read document",
 };
 
 function jobSummary(job: Job): string {
@@ -252,6 +254,16 @@ export function Inspector({
           )}
         </ul>
       </section>
+
+      <Ideas
+        projectId={projectId}
+        assetId={asset.id}
+        canEdit={canEdit}
+        onChanged={() => {
+          setReloadKey((k) => k + 1);
+          onChanged();
+        }}
+      />
 
       <section className="flex flex-col gap-2">
         <div className="flex items-center justify-between">
