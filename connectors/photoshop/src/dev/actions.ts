@@ -21,6 +21,8 @@ export function devActions(
       await runtime.pair();
       return runtime.status.connection;
     },
+    "stash-session": () => runtime.stashSession(),
+    "restore-session": () => runtime.restoreSession(),
     disconnect: async () => {
       await runtime.disconnect();
       return runtime.status.connection;

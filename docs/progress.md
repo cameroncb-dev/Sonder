@@ -94,6 +94,17 @@ Scope (from `Design_Plan.md` §15, plus canvas additions the user requested on 2
   2 new checks confirm a direction keeps its versions after one document moves on, and that
   reopening opens the exact saved version on a "Forest launch" branch.
 
+### Connection fixes (found while testing)
+
+- **Disconnect now revokes on the server.** `POST /api/connector/disconnect` marks the
+  session `revoked`; the plugin calls it on Disconnect. Before, disconnecting only made the
+  plugin forget its token, which stayed valid until it expired (12 h). E2E check: a token
+  works, is revoked, then gets 401.
+- **Test runs no longer sign the user's panel out.** The E2E stashes the panel's own
+  connection before pairing as a test user and restores it afterwards (dev actions
+  `stash-session` / `restore-session`). Verified: the panel was still connected, and its
+  heartbeats were accepted, after a full run.
+
 ### Acceptance criteria
 
 | Criterion                                                 | Evidence                                                                                                                          |

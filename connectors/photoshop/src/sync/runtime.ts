@@ -157,6 +157,10 @@ export class ConnectorRuntime {
   }
 
   async disconnect() {
+    // End the session on the server too, so the token can't be used again. Best effort: if
+    // the backend is unreachable, the token still expires on its own.
+    const api = this.api();
+    if (api) await api.disconnect().catch(() => undefined);
     this.session = undefined;
     this.pairing = undefined;
     await save("session.json", null);
@@ -182,6 +186,29 @@ export class ConnectorRuntime {
   /** What an open file is compared with: its baseline, else its branch head. */
   private reference(path: string): string | undefined {
     return this.baselines.get(path) ?? this.heads.get(path) ?? undefined;
+  }
+
+  /**
+   * Development: set the current connection aside so a test can pair as someone else, then
+   * put it back afterwards. The stashed token is never sent anywhere while set aside.
+   */
+  async stashSession() {
+    await save("session.stash.json", this.session ?? null);
+    return { stashed: !!this.session };
+  }
+
+  async restoreSession() {
+    const stored = await load<StoredSession | null>("session.stash.json", null);
+    await save("session.stash.json", null);
+    if (!stored || new Date(stored.expiresAt).getTime() <= Date.now()) return { restored: false };
+    this.pairing = undefined;
+    this.session = stored;
+    await save("session.json", stored);
+    this.update({
+      connection: { state: "active", user: stored.user, expiresAt: stored.expiresAt },
+      error: undefined,
+    });
+    return { restored: true };
   }
 
   api(): SonderApi | undefined {

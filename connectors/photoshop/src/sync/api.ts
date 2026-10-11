@@ -80,6 +80,11 @@ export class SonderApi {
     );
   }
 
+  /** Revokes this session's token on the server. */
+  disconnect() {
+    return request("/api/connector/disconnect", { token: this.token });
+  }
+
   checkpointElements(checkpointId: string) {
     return request(
       `/api/connector/checkpoints/${checkpointId}/elements`,

@@ -168,6 +168,8 @@ async function main() {
     if (typeof doc.path === "string") ownDocuments.push(doc.path.replace(/[^/]+$/, ""));
     check("Photoshop opens a saved test document", typeof doc.path === "string", doc.path);
 
+    // Keep the panel's own connection safe while the test pairs as a test user.
+    await trigger("stash-session");
     await trigger("pair");
     const pairing = await pluginStatus();
     const code = pairing.connection.code as string;
@@ -1168,6 +1170,56 @@ async function main() {
         !outsiderFile,
       [outsiderAssets.status, outsiderJob.status, outsiderRead.status],
     );
+    // A connection made and ended directly over HTTP: disconnecting revokes it on the server.
+    const json = (path: string, body: unknown, token?: string) =>
+      fetch(`${BASE}${path}`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          ...(token ? { authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify(body),
+      });
+    const started = await (
+      await json("/api/connector/pair/start", {
+        manifest: {
+          application: "photoshop",
+          connectorVersion: "0.3.0",
+          assetTypes: ["psd"],
+          operations: ["reportStatus"],
+          elementKinds: [],
+          previewFormats: ["image/png"],
+          runtime: {},
+          limitations: [],
+        },
+      })
+    ).json();
+    await owner.api("POST", "/api/connector/pair/approve", { code: started.code });
+    const paired = await (
+      await json("/api/connector/pair/poll", {
+        sessionId: started.sessionId,
+        pollSecret: started.pollSecret,
+      })
+    ).json();
+    const beat = async () =>
+      (await json("/api/connector/heartbeat", { openDocuments: [] }, paired.token)).status;
+    const beforeDisconnect = await beat();
+    const disconnected = await json("/api/connector/disconnect", {}, paired.token);
+    const afterDisconnect = await beat();
+    const { data: revoked } = await admin
+      .from("connector_sessions")
+      .select("status")
+      .eq("id", started.sessionId)
+      .single();
+    check(
+      "disconnecting revokes the connection on the server",
+      beforeDisconnect === 200 &&
+        disconnected.status === 204 &&
+        afterDisconnect === 401 &&
+        revoked?.status === "revoked",
+      [beforeDisconnect, disconnected.status, afterDisconnect, revoked?.status],
+    );
+
     const fake = await fetch(`${BASE}/api/connector/jobs/claim`, {
       method: "POST",
       headers: { authorization: "Bearer not-a-token" },
@@ -1208,6 +1260,7 @@ async function main() {
     await admin.auth.admin.deleteUser(outsider.id);
     for (const id of extraUsers) await admin.auth.admin.deleteUser(id);
     await trigger("disconnect").catch(() => undefined);
+    await trigger("restore-session").catch(() => undefined);
     for (const match of ownDocuments) await trigger("close-docs", { match }).catch(() => undefined);
   }
 }
