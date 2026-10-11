@@ -1,0 +1,30 @@
+<!doctype html>
+<html>
+  <head>
+    <style>
+      body {
+        padding: 12px;
+        color: var(--uxp-host-text-color);
+        font-size: 12px;
+      }
+      h2 {
+        margin: 0 0 8px;
+        font-size: 14px;
+      }
+      .row {
+        margin: 6px 0;
+      }
+      .label {
+        color: var(--uxp-host-text-color-secondary);
+      }
+    </style>
+  </head>
+  <body>
+    <h2>Sonder</h2>
+    <div class="row"><span class="label">Photoshop:</span> <span id="host">—</span></div>
+    <div class="row"><span class="label">Active document:</span> <span id="doc">—</span></div>
+    <div class="row"><span class="label">Backend:</span> <span id="backend">not checked</span></div>
+    <sp-button id="refresh">Refresh</sp-button>
+    <script src="index.js"></script>
+  </body>
+</html>

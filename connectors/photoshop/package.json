@@ -1,0 +1,9 @@
+{
+  "name": "@sonder/connector-photoshop",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Sonder Photoshop UXP connector. Load plugin/manifest.json with the UXP Developer Tool.",
+  "scripts": {
+    "typecheck": "node --check plugin/index.js"
+  }
+}

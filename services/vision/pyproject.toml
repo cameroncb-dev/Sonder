@@ -1,0 +1,53 @@
+[project]
+name = "sonder-vision"
+version = "0.1.0"
+description = "Sonder vision service: palette extraction and visual differences"
+requires-python = ">=3.12,<3.14"
+dependencies = [
+    "fastapi>=0.143,<0.144",
+    "uvicorn[standard]>=0.54,<0.55",
+    "pydantic>=2.14,<3",
+    "pydantic-settings>=2.15,<3",
+    "python-multipart>=0.0.32",
+    "numpy>=2.5,<3",
+    "opencv-python-headless>=5.0,<6",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=9.1,<10",
+    "httpx>=0.28,<0.29",
+    "ruff>=0.17,<0.18",
+    "mypy>=2.4,<3",
+]
+
+[build-system]
+requires = ["setuptools>=75"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "S"]
+ignore = ["S101"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S105", "S106"]
+
+[tool.mypy]
+strict = true
+plugins = ["pydantic.mypy"]
+mypy_path = "src"
+
+[[tool.mypy.overrides]]
+module = ["cv2", "cv2.*"]
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]

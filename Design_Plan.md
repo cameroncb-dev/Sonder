@@ -472,7 +472,7 @@ Live multiplayer editing is deferred.
 
 ### Goal
 
-Combine supported properties deterministically.
+Combine supported properties deterministically. 
 
 ### Merge rules
 

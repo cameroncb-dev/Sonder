@@ -1,0 +1,6 @@
+pnpm-lock.yaml
+.next/
+.venv/
+supabase/.temp/
+*.lock
+Design_Plan.md
