@@ -47,20 +47,25 @@ cp services/vision/.env.example services/vision/.env
 openssl rand -hex 32     # use the same value for VISION_SERVICE_TOKEN in both files
 ```
 
-| Variable                               | Where        | Purpose                                                |
-| -------------------------------------- | ------------ | ------------------------------------------------------ |
-| `NEXT_PUBLIC_SUPABASE_URL`             | web          | Supabase API URL                                       |
-| `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` | web          | Browser-safe key; RLS enforces access                  |
-| `SUPABASE_SECRET_KEY`                  | web (server) | Admin key. Server-only; never in the browser or plugin |
-| `VISION_SERVICE_URL`                   | web          | Default `http://127.0.0.1:8000`                        |
-| `VISION_SERVICE_TOKEN`                 | web + vision | Shared bearer secret, at least 16 characters           |
-| `VISION_MAX_UPLOAD_BYTES`              | vision       | Request body limit, default 20 MiB                     |
-| `VISION_MAX_IMAGE_PIXELS`              | vision       | Decoded image limit, default 50 MP                     |
-| `LLM_PROVIDER`                         | web (server) | `none` (default) or `anthropic`                        |
-| `LLM_MODEL`                            | web (server) | Model id for the selected provider                     |
-| `ANTHROPIC_API_KEY`                    | web (server) | Required when `LLM_PROVIDER=anthropic`                 |
+| Variable                               | Where        | Purpose                                                 |
+| -------------------------------------- | ------------ | ------------------------------------------------------- |
+| `NEXT_PUBLIC_SUPABASE_URL`             | web          | Supabase API URL                                        |
+| `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` | web          | Browser-safe key; RLS enforces access                   |
+| `SUPABASE_SECRET_KEY`                  | web (server) | Admin key. Server-only; never in the browser or plugin  |
+| `VISION_SERVICE_URL`                   | web          | Default `http://127.0.0.1:8000`                         |
+| `VISION_SERVICE_TOKEN`                 | web + vision | Shared bearer secret, at least 16 characters            |
+| `VISION_MAX_UPLOAD_BYTES`              | vision       | Request body limit, default 20 MiB                      |
+| `VISION_MAX_IMAGE_PIXELS`              | vision       | Decoded image limit, default 50 MP                      |
+| `LLM_PROVIDER`                         | web (server) | `none` (default), `gemini`, or `anthropic`              |
+| `LLM_MODEL`                            | web (server) | Model id for the selected provider; optional for Gemini |
+| `ANTHROPIC_API_KEY`                    | web (server) | Required when `LLM_PROVIDER=anthropic`                  |
+| `GEMINI_API_KEY`                       | web (server) | Required when `LLM_PROVIDER=gemini`; server-only        |
 
 All `.env*` files except `*.env.example` are git-ignored.
+
+For the Phase 8 Gemini assistant, set `LLM_PROVIDER=gemini` and add a Google AI Studio key as
+`GEMINI_API_KEY`. The default Gemini model is `gemini-3.8-flash`; if that model returns a
+temporary high-demand error, set `LLM_MODEL=gemini-3.6-flash` and restart the web dev server.
 
 ## 4. Supabase
 

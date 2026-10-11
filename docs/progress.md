@@ -9,7 +9,7 @@ Scope (see `Design_Plan.md` §17): **Suggest directions** for a document, and **
 board**, both through Google Gemini with server-side validation, preview and approval or undo.
 The Gemini key (`GEMINI_API_KEY`) is supplied by the user in `apps/web/.env.local`.
 
-### Built so far (verified without a key)
+### Built so far
 
 - **Gemini provider** (`src/server/llm/gemini.ts`): REST `generateContent`. The key goes in
   the `x-goog-api-key` header, never the URL. JSON replies are validated against a Zod
@@ -45,9 +45,12 @@ The Gemini key (`GEMINI_API_KEY`) is supplied by the user in `apps/web/.env.loca
   - integration 45/45 (reviewers refused, a candidate builds from the current version,
     exact-candidate keep creates a branch while main stays put, duplicate branch names and
     other documents' versions refused).
+  - browser check with the user's real Gemini key: `gemini-3.8-flash` reached Gemini but
+    returned a temporary high-demand error; setting `LLM_MODEL=gemini-3.6-flash` and letting
+    the dev server reload `.env.local` made **Organize board** work in the browser.
 
-**Not verified yet:** a real Gemini call, which needs the user's key, and the screens in a
-browser.
+**Not verified yet:** the Ideas flow against a real Photoshop document
+(generate suggestions → Try it → Keep as branch), and automated E2E coverage for the Gemini UI.
 
 ## Phase 6 — Shared Themes, Project Directions and Canvas Additions
 
