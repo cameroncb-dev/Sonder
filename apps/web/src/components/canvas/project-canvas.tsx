@@ -730,7 +730,8 @@ function CanvasInner({ projectId }: { projectId: string }) {
           name={choosingDirection.name}
           onCancel={() => setChoosingDirection(null)}
           onConfirm={(entries) => {
-            setPlacing({ kind: "direction", ...choosingDirection, entries });
+            // Saved straight away, in the middle of the view: no extra click to place it.
+            void place({ kind: "direction", ...choosingDirection, entries }, center());
             setChoosingDirection(null);
           }}
         />

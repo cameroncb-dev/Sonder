@@ -292,7 +292,7 @@ export function Toolbox({
       <Section id="directions" title="Directions" open={isOpen("directions")} onToggle={toggle}>
         <p className="text-xs text-zinc-500">
           Save a named look: the exact version of each document, kept as it is even as you keep
-          working. Reopen it later from its card.
+          working. It appears as a card in the middle of your view; click it to reopen the versions.
         </p>
         <Label>Name</Label>
         <input

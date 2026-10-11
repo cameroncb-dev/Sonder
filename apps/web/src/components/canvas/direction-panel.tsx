@@ -284,7 +284,7 @@ export function DirectionPicker({
             disabled={!entries.length}
             onClick={() => onConfirm(entries)}
           >
-            Save and place ({entries.length})
+            Save direction ({entries.length})
           </button>
         </div>
       </div>
