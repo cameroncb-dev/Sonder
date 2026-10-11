@@ -37,6 +37,11 @@ function jobSummary(job: Job): string {
   return `${label}${branch} ${job.status}`;
 }
 
+/** One-line explanation under a section heading. */
+function Hint({ children }: { children: React.ReactNode }) {
+  return <p className="text-[11px] leading-snug text-zinc-500 dark:text-zinc-400">{children}</p>;
+}
+
 export function Inspector({
   projectId,
   asset,
@@ -163,6 +168,10 @@ export function Inspector({
 
       <section className="flex flex-col gap-2">
         <h3 className="text-xs font-semibold uppercase tracking-wide text-zinc-500">Capture</h3>
+        <Hint>
+          Saves a snapshot of the open document onto the active branch: a version you can return to,
+          compare or combine later. Sonder never captures on its own.
+        </Hint>
         {changeLabel(asset) && (
           <p className="text-xs text-amber-700 dark:text-amber-400">
             {changeLabel(asset)}
@@ -205,6 +214,12 @@ export function Inspector({
 
       <section className="flex flex-col gap-2">
         <h3 className="text-xs font-semibold uppercase tracking-wide text-zinc-500">Branches</h3>
+        <Hint>
+          Separate lines of experiments. Switch opens a branch&apos;s latest version in the app as
+          its own copy, so other branches stay untouched.
+          {history.branches.length === 1 &&
+            " To try an alternative, click a checkpoint in History and choose Branch from here."}
+        </Hint>
         <ul className="flex flex-col gap-1">
           {history.branches.map((b) => {
             const active = b.id === history.asset.activeBranchId;
@@ -256,6 +271,10 @@ export function Inspector({
             Combine branches…
           </button>
         </div>
+        <Hint>
+          Take chosen changes (text and fill colors) from one branch into another. You review a
+          preview before anything is saved.
+        </Hint>
         {proposals.slice(0, 4).map((p) => (
           <button
             key={p.id}
@@ -324,6 +343,12 @@ export function Inspector({
             Compare {compared.length}/2
           </button>
         </div>
+        {history.checkpoints.length > 0 && (
+          <Hint>
+            Every capture, newest first, drawn as lines per branch. Click one for details or to
+            branch from it; tick two boxes to compare them.
+          </Hint>
+        )}
         {history.checkpoints.length ? (
           <HistoryGraph
             checkpoints={history.checkpoints}
@@ -337,7 +362,10 @@ export function Inspector({
             }
           />
         ) : (
-          <p className="text-xs text-zinc-500">No checkpoints yet.</p>
+          <p className="text-xs text-zinc-500">
+            No checkpoints yet. Open this document in the app with the Sonder panel connected, then
+            click Capture above.
+          </p>
         )}
       </section>
 
@@ -373,6 +401,12 @@ export function Inspector({
               )}
             </tbody>
           </table>
+          {canEdit && (
+            <Hint>
+              Branch from here starts a new line of experiments from this version, leaving the
+              current branch as it is.
+            </Hint>
+          )}
           {canEdit && (
             <form
               className="flex gap-2"
