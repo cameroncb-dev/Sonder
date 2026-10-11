@@ -66,7 +66,7 @@ All `.env*` files except `*.env.example` are git-ignored.
 
 ### Hosted project (designated project)
 
-No Supabase project has been designated yet. To connect one:
+Designated project: **Sonder** (ref `rihciqpkzdzpdsxmyaut`, East US). To connect a fresh checkout:
 
 ```sh
 supabase login

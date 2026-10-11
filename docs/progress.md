@@ -2,14 +2,14 @@
 
 ## Phase 1 — Collect Components and Configure Services
 
-Status: **complete except for items blocked on user input** (hosted Supabase project, UXP
-Developer Tool runtime check).
+Status: **complete except for the Photoshop runtime check**, which is blocked on installing the UXP
+Developer Tool.
 
 ### Environment found
 
 macOS (Darwin 25.5), Node 24.2.0, pnpm 10.12.4, Python 3.12.12 (also 3.11, 3.13, 3.14),
 Supabase CLI 2.75.0, Docker 29.1.3, Photoshop 2021, 2025 and **2026 (27.8.0)**. Not present:
-`uv`, UXP Developer Tool, Supabase CLI login.
+`uv`, UXP Developer Tool, Supabase CLI login (logged in and linked later in Phase 1).
 
 ### Completed
 
@@ -35,26 +35,30 @@ Supabase CLI 2.75.0, Docker 29.1.3, Photoshop 2021, 2025 and **2026 (27.8.0)**. 
 
 ### Verification performed (actual results)
 
-| Check                                                   | Result                                                                                                                              |
-| ------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
-| `pnpm install`                                          | Resolved                                                                                                                            |
-| `pnpm typecheck`, `pnpm lint`, `pnpm format:check`      | Pass                                                                                                                                |
-| `pnpm test` (Vitest)                                    | 6/6 pass (env parsing, LLM disabled states)                                                                                         |
-| `pnpm --filter web build`                               | Pass                                                                                                                                |
-| Vision `pytest`                                         | 6/6 pass (public health, 401 without token, 503 when unconfigured, decode, 422, 413)                                                |
-| Vision `ruff check`, `ruff format --check`, `mypy src`  | Pass                                                                                                                                |
-| Web dev server + vision server started                  | Both served requests                                                                                                                |
-| Backend → vision                                        | `/api/health` returned `vision.reachable: true, authenticated: true`                                                                |
-| Vision live: unauthenticated inspect                    | 401                                                                                                                                 |
-| Vision live: 25 MB upload                               | 413                                                                                                                                 |
-| `/auth/callback` without a code                         | 307 to `/?auth_error=callback_failed`                                                                                               |
-| **Local** Supabase (`supabase start`, Docker)           | Migration applied; 3 private buckets and 3 policies present                                                                         |
-| `pnpm --filter web verify:supabase` against local stack | 10/10 pass: connectivity, private buckets, sign-in, own-folder upload/download, cross-user upload denied, anonymous download denied |
+| Check                                                         | Result                                                                                                                              |
+| ------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| `pnpm install`                                                | Resolved                                                                                                                            |
+| `pnpm typecheck`, `pnpm lint`, `pnpm format:check`            | Pass                                                                                                                                |
+| `pnpm test` (Vitest)                                          | 6/6 pass (env parsing, LLM disabled states)                                                                                         |
+| `pnpm --filter web build`                                     | Pass                                                                                                                                |
+| Vision `pytest`                                               | 6/6 pass (public health, 401 without token, 503 when unconfigured, decode, 422, 413)                                                |
+| Vision `ruff check`, `ruff format --check`, `mypy src`        | Pass                                                                                                                                |
+| Web dev server + vision server started                        | Both served requests                                                                                                                |
+| Backend → vision                                              | `/api/health` returned `vision.reachable: true, authenticated: true`                                                                |
+| Vision live: unauthenticated inspect                          | 401                                                                                                                                 |
+| Vision live: 25 MB upload                                     | 413                                                                                                                                 |
+| `/auth/callback` without a code                               | 307 to `/?auth_error=callback_failed`                                                                                               |
+| **Local** Supabase (`supabase start`, Docker)                 | Migration applied; 3 private buckets and 3 policies present                                                                         |
+| `pnpm --filter web verify:supabase` against local stack       | 10/10 pass: connectivity, private buckets, sign-in, own-folder upload/download, cross-user upload denied, anonymous download denied |
+| **Hosted** Supabase project `Sonder` (`rihciqpkzdzpdsxmyaut`) | Linked; confirmed empty first (no buckets, public tables or users); `supabase db push` applied the migration                        |
+| `pnpm --filter web verify:supabase` against hosted project    | 10/10 pass (same checks); temporary user and file removed afterwards                                                                |
+| Web `/api/health` with hosted config                          | `supabase.configured: true`                                                                                                         |
 
 ### Not verified
 
-- **Hosted Supabase.** No project is designated and the CLI isn't logged in. Everything above
-  ran against the local Docker stack only.
+- **New-style secret key.** The CLI only returns the `sb_secret_…` key masked, so the hosted
+  verification ran with the legacy `service_role` key, passed as a one-off environment variable
+  and never saved to disk. `SUPABASE_SECRET_KEY` in `apps/web/.env.local` is still empty.
 - **Photoshop plugin loading.** UXP Developer Tool isn't installed, so the plugin has not been
   loaded in Photoshop and reading the active document name hasn't run. Also unverified: whether
   UXP allows plain-`http` `fetch` to `localhost` with the declared `network.domains`.
@@ -63,9 +67,11 @@ Supabase CLI 2.75.0, Docker 29.1.3, Photoshop 2021, 2025 and **2026 (27.8.0)**. 
 
 ### Blockers requiring user input
 
-1. **Supabase project.** Which hosted project should Sonder use? Run `supabase login`, then
-   `supabase link --project-ref <ref>` and `supabase db push`, and put the URL and keys in
-   `apps/web/.env.local`. After that, `pnpm --filter web verify:supabase` verifies it.
+1. **Supabase secret key.** Copy the `sb_secret_…` key from Project Settings → API Keys (click
+   Reveal) into `SUPABASE_SECRET_KEY` in `apps/web/.env.local`, then re-run
+   `pnpm --filter web verify:supabase`. Also set the dashboard's Authentication → URL
+   Configuration: Site URL `http://localhost:3000`, redirect URL
+   `http://localhost:3000/auth/callback`.
 2. **UXP Developer Tool.** Install it from Creative Cloud, load
    `connectors/photoshop/plugin/manifest.json` in Photoshop 2026, and confirm the panel shows
    the document name (see `docs/setup.md` §5).
