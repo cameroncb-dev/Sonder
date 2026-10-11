@@ -1,5 +1,14 @@
 # Progress
 
+## Phase 8 (re-scoped) — AI Assistant with Gemini
+
+Status: **in progress.** Branch: `phase-8-ai-assistant`. The user may drop it if it can't be
+finished in time. Phase 7 (computer vision) is deferred until after this.
+
+Scope (see `Design_Plan.md` §17): **Suggest directions** for a document, and **Organize
+board**, both through Google Gemini with server-side validation, preview and approval or undo.
+The Gemini key (`GEMINI_API_KEY`) is supplied by the user in `apps/web/.env.local`.
+
 ## Phase 6 — Shared Themes, Project Directions and Canvas Additions
 
 Status: **complete, pending the user's check of directions.** Every acceptance criterion is

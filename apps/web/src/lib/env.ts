@@ -13,9 +13,10 @@ const serverEnvSchema = z.object({
   VISION_SERVICE_URL: z.url().default("http://127.0.0.1:8000"),
   VISION_SERVICE_TOKEN: z.string().min(16).optional(),
 
-  LLM_PROVIDER: z.enum(["none", "anthropic"]).default("none"),
+  LLM_PROVIDER: z.enum(["none", "anthropic", "gemini"]).default("none"),
   LLM_MODEL: z.string().min(1).optional(),
   ANTHROPIC_API_KEY: z.string().min(1).optional(),
+  GEMINI_API_KEY: z.string().min(1).optional(),
 });
 
 export type ServerEnv = z.infer<typeof serverEnvSchema>;

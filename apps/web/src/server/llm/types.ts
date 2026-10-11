@@ -14,6 +14,8 @@ export interface InterpretRequest<T> {
   context: string;
   /** Output must parse against this schema or the call fails. */
   schema: z.ZodType<T>;
+  /** Images the model may look at (e.g. document previews), as raw bytes. */
+  images?: Array<{ mimeType: string; data: Uint8Array }>;
 }
 
 export type InterpretResult<T> =

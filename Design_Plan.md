@@ -605,6 +605,22 @@ Computer vision describes appearance; document manifests remain authoritative fo
 
 Expose working operations through natural language.
 
+**Re-scoped 2026-10-11 (user request): "AI assistant" using Google Gemini.** Built first; it
+may be dropped if it can't be finished in time. Two features replace typed commands for now:
+
+- [ ] **Suggest directions:** for one document, Gemini sees the current preview and
+      supported layer properties and proposes up to three alternatives as concrete property
+      changes. Sonder validates each change against the real layers and connector
+      capabilities. "Try it" builds a candidate (same job as combination); "Keep as branch"
+      saves it as a new branch. Nothing changes without approval.
+- [ ] **Organize board:** Gemini groups canvas cards into titled sections and suggests
+      connections. Sonder computes positions deterministically, shows the plan before
+      applying, and can undo it. It never touches documents or version history.
+- [ ] Gemini key stays server-side (`GEMINI_API_KEY`). Project content is sent to Google only
+      when the user asks; everything works without it.
+
+The typed commands below, comments and review decisions remain for later.
+
 ### Example commands
 
 - "Compare Vintage and Modern."
