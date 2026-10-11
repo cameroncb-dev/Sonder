@@ -109,3 +109,17 @@ It creates "Spring Poster" with `main` (three versions), `warm-launch` and `nigh
 (both from the second version), and `warm-serif` (a branch of `warm-launch`), plus notes on
 the canvas suggesting what to try. It takes about two minutes and leaves `main` open in
 Photoshop.
+
+For a project that covers every version feature (capture, compare, restore, switch, combine,
+themes and directions):
+
+```sh
+pnpm --filter web seed:feature-demo -- "Sonder Demo"
+```
+
+It creates "Spring Poster" (the branches above, plus a fourth `main` version with a lime
+background to restore from) and "Spring Flyer" (two versions). It also adds the themes
+"Sunset" and "Midnight", already mapped to both documents' headline, body and background, and
+the directions "Client shortlist" and "Night launch". Numbered notes on the canvas walk
+through the demo. It takes about three minutes and leaves both documents open in Photoshop on
+`main`.
