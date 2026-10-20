@@ -6,6 +6,8 @@ Collaborative visual workspace for creative projects across multiple application
 `Design_Plan.md` for the plan, `docs/setup.md` for full setup details, and `docs/progress.md`
 for status.
 
+[![Sonder homepage at sondr.design](docs/sondr-home.png)](https://www.sondr.design/)
+
 ## Try it yourself
 
 You need **Photoshop 2026**, Node.js 20.9+, pnpm, Python 3.12, and a Supabase project. Sonder
